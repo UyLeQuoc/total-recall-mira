@@ -1,0 +1,12 @@
+{
+  "name": "mira-imessage",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server/index.mjs & npm --prefix web run dev; wait",
+    "server": "node server/index.mjs",
+    "build": "npm --prefix web ci && npm --prefix web run build",
+    "start": "node server/index.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
