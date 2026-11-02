@@ -101,7 +101,7 @@ for (const s of plan) {
 const sfxInputs = cues.flatMap(([name]) => ['-i', `assets/audio/${name}.wav`])
 const sfxChains = cues.map(([, at], i) => `[${i + 2}:a]adelay=${Math.round(at * 1000)}:all=1,volume=0.5[s${i}]`).join(';')
 const sfxLabels = cues.map((_, i) => `[s${i}]`).join('')
-ff('-i', VOICE_ONLY, '-i', 'assets/audio/bed.wav', ...sfxInputs, '-filter_complex',
+ff('-i', VOICE_ONLY, '-i', 'assets/audio/bed.mp3', ...sfxInputs, '-filter_complex',
   `[0:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[voice][key];` +
   `[1:a]atrim=0:${total.toFixed(2)},volume=0.32,afade=t=out:st=${(total - 3).toFixed(2)}:d=3[bed];` +
   `[bed][key]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=350[ducked];` +
