@@ -3,3 +3,5 @@ web/dist
 .env
 artifacts/raw
 .DS_Store
+artifacts/work
+artifacts/*.mp4

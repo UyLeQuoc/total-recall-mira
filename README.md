@@ -64,6 +64,20 @@ The YouCam key never reaches the browser. `server/youcam.mjs` implements the doc
 | `web/src/landing/Landing.tsx` | Marketing page |
 | `web/src/data/catalog.ts` | Fictional brands, shades, stores and the `lip_color` effect builder |
 
+## Screenshots
+
+| Landing | Agent trace | Skin report | Matched picks |
+| :---: | :---: | :---: | :---: |
+| ![Landing](artifacts/screenshots/01.png) | ![Agent trace](artifacts/screenshots/03.png) | ![Skin report](artifacts/screenshots/04.png) | ![Picks](artifacts/screenshots/05.png) |
+| **Greeting** | **Lip try-on** | **Outfit try-on** | **Mira remembers** |
+| ![Greeting](artifacts/screenshots/02.png) | ![Lip try-on](artifacts/screenshots/06.png) | ![Outfit try-on](artifacts/screenshots/07.png) | ![Memory](artifacts/screenshots/08.png) |
+
+## Demo mode
+
+The submission video was recorded in demo mode (no `YOUCAM_API_KEY`), and the app labels it as such in the header ("demo mode") and on every result ("demo preview"). In demo mode the server returns deterministic skin scores per photo, the bundled demo selfie gets a local lip tint preview, and the outfit card previews the garment reference. Set `YOUCAM_API_KEY` and the same UI calls YouCam Skin Analysis, Makeup VTO and AI Clothes for real; nothing else changes.
+
+To re-record the video: start the server (`npm start`), then run `node scripts/record-demo.mjs` and `node scripts/make-video.mjs` (macOS, needs ffmpeg and Playwright Chromium). Output lands in `artifacts/mira-demo.mp4`.
+
 ## Notes and limitations
 
 Brands, stores and prices are fictional so the demo carries no third party trademarks; a production build would plug a real catalog and price feed into `catalog.ts`. Demo photos in `web/public/samples` are YouCam's own documentation sample images. The iMessage experience is a faithful web rendition so judges can open it on any iPhone without an Apple Business Chat account; the same agent could sit behind an iMessage relay (for example Business Chat) unchanged because all state lives in the agent hook and the server API.

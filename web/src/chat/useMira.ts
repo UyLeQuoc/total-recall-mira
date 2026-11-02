@@ -3,6 +3,7 @@
 // iMessage bubbles with a visible step trace.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError, prepareImage, type SkinReport } from '../lib/api'
+import { demoLipPreview } from '../lib/demoTint'
 import { loadProfile, saveProfile, type Profile } from '../lib/memory'
 import { CONCERN_LABEL, GARMENTS, LIP_SHADES, SKIN_PRODUCTS, best, lipEffect, saved, type Garment, type LipShade, type SkinProduct } from '../data/catalog'
 
@@ -46,6 +47,14 @@ const START_CHIPS: Chip[] = [
   { label: '🧥 Try on an outfit', action: { type: 'outfit' } },
   { label: '🧠 What do you know about me?', action: { type: 'memory' } },
 ]
+
+// Makeup VTO call; in demo mode the bundled selfie gets a local tint preview.
+async function makeup(img: string, shade: LipShade, signal?: AbortSignal) {
+  const out = await api.makeup(img, lipEffect(shade), signal)
+  if (!out.mock) return out
+  const preview = await demoLipPreview(img, shade.color, shade.texture === 'gloss').catch(() => null)
+  return { ...out, url: preview || out.url }
+}
 
 export function useMira() {
   const [msgs, setMsgs] = useState<Msg[]>([])
@@ -163,7 +172,7 @@ export function useMira() {
         t.set(4, 'run')
         const redness = report.concerns.find((c) => c.type === 'redness')?.score ?? 80
         const shade = redness < 70 ? LIP_SHADES[0] : report.skinAge && report.skinAge > 30 ? LIP_SHADES[3] : LIP_SHADES[1]
-        const out = await api.makeup(img, lipEffect(shade), ac.signal)
+        const out = await makeup(img, shade, ac.signal)
         t.set(4, 'done', shade.name)
         remember((p) => (p.lipShade = shade.name))
         await say(
@@ -203,7 +212,7 @@ export function useMira() {
       const t = trace(`Trying ${shade.name}`, [['YouCam Makeup VTO', `${shade.texture} · ${shade.color}`], ['Price check', '3 stores']])
       try {
         t.set(0, 'run')
-        const out = await api.makeup(ctx.current.selfie, lipEffect(shade))
+        const out = await makeup(ctx.current.selfie, shade)
         t.set(0, 'done')
         t.set(1, 'done', `best $${best(shade.offers).price} at ${best(shade.offers).store}`)
         remember((p) => (p.lipShade = shade.name))
@@ -235,7 +244,9 @@ export function useMira() {
         const garment = await prepareImage(g.image, { minShort: 512, maxLong: 1600 })
         t.set(0, 'done')
         t.set(1, 'run')
-        const out = await api.cloth(ctx.current.body, garment, g.category)
+        const res = await api.cloth(ctx.current.body, garment, g.category)
+        // Demo mode has no generated image, so preview the garment reference instead.
+        const out = res.mock ? { ...res, url: g.image } : res
         t.set(1, 'done')
         t.set(2, 'done', `best $${best(g.offers).price} at ${best(g.offers).store}`)
         push({ from: 'mira', kind: 'tryon', before: ctx.current.body, after: out.url, title: g.name, sub: `${g.brand} · $${best(g.offers).price} at ${best(g.offers).store}`, mock: out.mock })

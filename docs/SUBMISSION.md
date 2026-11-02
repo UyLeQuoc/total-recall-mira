@@ -38,6 +38,10 @@ The best moment to use Skin AI is the moment right before a purchase, and the be
 
 A real catalog and price feed, YouCam Skin Tone analysis to pick foundation and undertone aware shades, weekly check in scans that track whether a product is working, and a native iMessage relay so the same agent answers texts sent to a phone number.
 
+## Try it
+
+Clone the repo, add a `YOUCAM_API_KEY` to `.env`, then `npm --prefix web install && npm run build && npm start` and open `http://localhost:8787`. Without a key the app runs in a clearly labelled demo mode (mock skin scores, local lip tint preview on the bundled demo selfie, garment reference preview), which is the mode the demo video was recorded in. On an iPhone, open the page in Safari and add it to the home screen for the full screen iMessage feel.
+
 ## Built with
 
 YouCam API (AI Skin Analysis, Makeup VTO, AI Clothes), React, TypeScript, Vite, Node.js, Playwright (demo recording).

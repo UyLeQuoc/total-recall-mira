@@ -291,7 +291,7 @@ function TryOn({ msg }: { msg: Extract<Msg, { kind: 'tryon' }> }) {
         <span className="lbl l">before</span>
         <span className="lbl r">after</span>
         {!loaded && <div className="shimmer" />}
-        {msg.mock && <span className="demo-badge">demo mode · add YouCam key</span>}
+        {msg.mock && <span className="demo-badge">demo preview</span>}
       </div>
       <div className="card-title">{msg.title}</div>
       <div className="card-sub">{msg.sub}</div>
