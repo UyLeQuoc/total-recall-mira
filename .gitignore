@@ -6,3 +6,5 @@ artifacts/raw
 artifacts/work
 artifacts/*.mp4
 .cache
+artifacts/elevenlabs-previous-draft.txt
+assets/voice/.claude

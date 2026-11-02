@@ -13,10 +13,39 @@ export class ApiError extends Error {
   }
 }
 
+// The user's own YouCam key and demo choice live only in this browser; the key is sent
+// per request so the server can call YouCam on the user's units, and is never stored there.
+const KEY_STORE = 'mira.youcamKey'
+const DEMO_STORE = 'mira.demo'
+const read = (k: string) => {
+  try {
+    return localStorage.getItem(k) || ''
+  } catch {
+    return ''
+  }
+}
+const write = (k: string, v: string) => {
+  try {
+    if (v) localStorage.setItem(k, v)
+    else localStorage.removeItem(k)
+  } catch {
+    // storage blocked; the setting lasts for this page only
+  }
+}
+export const settings = {
+  key: () => read(KEY_STORE),
+  setKey: (v: string) => write(KEY_STORE, v.trim()),
+  demo: () => read(DEMO_STORE) === '1',
+  setDemo: (on: boolean) => write(DEMO_STORE, on ? '1' : ''),
+}
+
 async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   let res: Response
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (settings.demo()) headers['X-Mira-Demo'] = '1'
+  else if (settings.key()) headers['X-YouCam-Key'] = settings.key()
   try {
-    res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal })
+    res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body), signal })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
     throw new ApiError('offline', "I can't reach the server right now. Check your connection and try again.")
@@ -33,13 +62,18 @@ function friendly(code?: string, message?: string) {
   if (c.includes('lighting')) return 'It is a little dark. Try again near a window.'
   if (c.includes('size')) return 'That photo is too small. Send one at least 600px wide.'
   if (c.includes('pose')) return 'For outfits I need a full body photo, standing, arms relaxed.'
-  if (c.includes('credit') || c.includes('unit')) return 'My YouCam units ran out for today.'
+  if (c.includes('credit') || c.includes('unit')) return 'My shared YouCam units ran out. Add your own free YouCam key (new accounts get free units) or try demo mode 👇'
+  if (c.includes('auth') || c === 'http_401' || c === 'http_403') return 'That YouCam key did not work. Double check it in your YouCam console and paste it again.'
   if (c === 'timeout') return 'YouCam is taking longer than usual. Try once more?'
   return message || 'Something went wrong on my side. Try again?'
 }
 
 export const api = {
-  health: () => fetch('/api/health').then((r) => r.json() as Promise<{ ok: boolean; live: boolean }>),
+  // Live when demo is off and either the server or the user has a key.
+  health: () =>
+    fetch('/api/health')
+      .then((r) => r.json() as Promise<{ ok: boolean; live: boolean }>)
+      .then((h) => ({ ...h, live: !settings.demo() && (h.live || Boolean(settings.key())), own: Boolean(settings.key()) })),
   skin: (image: string, signal?: AbortSignal) => post<SkinReport>('/api/skin', { image }, signal),
   makeup: (image: string, effect: unknown, signal?: AbortSignal) => post<{ mock: boolean; url: string }>('/api/makeup', { image, effect }, signal),
   cloth: (image: string, garment: string, category: string, signal?: AbortSignal) =>

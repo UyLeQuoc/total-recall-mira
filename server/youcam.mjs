@@ -1,11 +1,21 @@
 // Thin client for the YouCam S2S API v2 (https://docs.perfectcorp.com).
 // Flow for every feature: register file -> PUT bytes to presigned URL -> create task -> poll.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 const BASE = process.env.YOUCAM_BASE || 'https://yce-api-01.makeupar.com'
 const POLL_MS = 2000
 const POLL_TIMEOUT_MS = 120_000
 
-export const hasKey = () => Boolean(process.env.YOUCAM_API_KEY)
+// A user may bring their own YouCam key (sent per request, never stored or logged);
+// otherwise the server's key is used.
+export const requestKey = new AsyncLocalStorage()
+// An empty string in the store means demo mode: no key at all, not even the server's.
+const currentKey = () => {
+  const own = requestKey.getStore()
+  return own === undefined ? process.env.YOUCAM_API_KEY : own
+}
+export const hasKey = () => Boolean(currentKey())
 
 export class YouCamError extends Error {
   constructor(message, code, status) {
@@ -19,7 +29,7 @@ async function call(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
     headers: {
-      Authorization: `Bearer ${process.env.YOUCAM_API_KEY}`,
+      Authorization: `Bearer ${currentKey()}`,
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,

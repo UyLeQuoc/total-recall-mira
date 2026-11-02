@@ -2,7 +2,7 @@
 // product matching, price check, YouCam Makeup or Clothes VTO), streamed into the thread as
 // iMessage bubbles with a visible step trace.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, ApiError, prepareImage, zoomToFace, type SkinReport } from '../lib/api'
+import { api, ApiError, prepareImage, settings, zoomToFace, type SkinReport } from '../lib/api'
 import { demoLipPreview } from '../lib/demoTint'
 import { loadProfile, saveProfile, type Profile } from '../lib/memory'
 import { CONCERN_LABEL, GARMENTS, LIP_SHADES, SKIN_PRODUCTS, best, lipEffect, saved, type Garment, type LipShade, type SkinProduct } from '../data/catalog'
@@ -31,6 +31,8 @@ export type Action =
   | { type: 'memory' }
   | { type: 'demoSelfie' }
   | { type: 'demoBody' }
+  | { type: 'addKey' }
+  | { type: 'demoMode' }
   | { type: 'say'; text: string }
 
 type Pending = 'selfie' | 'body' | null
@@ -40,6 +42,13 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 export const DEMO_SELFIE = '/samples/selfie-face.jpg'
 export const DEMO_BODY = '/samples/person-full.jpg'
+
+// Offered whenever YouCam refuses for lack of units or a bad key.
+const KEY_CHIPS: Chip[] = [
+  { label: '🔑 Use my own YouCam key', action: { type: 'addKey' } },
+  { label: '✨ Try demo mode', action: { type: 'demoMode' } },
+]
+const needsKey = (err: unknown) => err instanceof ApiError && /credit|unit|auth|http_401|http_403/i.test(err.code)
 
 const START_CHIPS: Chip[] = [
   { label: '📸 Scan my skin', action: { type: 'scan' } },
@@ -62,6 +71,7 @@ export function useMira() {
   const [busy, setBusy] = useState<Busy>('idle')
   const [chips, setChips] = useState<Chip[]>([])
   const [live, setLive] = useState<boolean | null>(null)
+  const [keySheet, setKeySheet] = useState(false)
   const ctx = useRef({ selfie: null as string | null, body: null as string | null, report: null as SkinReport | null, pending: null as Pending, profile: loadProfile() })
   const abortRef = useRef<AbortController | null>(null)
   const started = useRef(false)
@@ -200,7 +210,7 @@ export function useMira() {
         const idx = [0, 1, 2, 3, 4]
         idx.forEach((i) => t.set(i, 'fail'))
         await say(err instanceof ApiError ? err.message : 'something broke on my side, try again?')
-        setChips([{ label: '📸 Try another selfie', action: { type: 'scan' } }, ...(ctx.current.selfie ? [] : [{ label: '✨ Use demo selfie', action: { type: 'demoSelfie' } as Action }])])
+        setChips(needsKey(err) ? KEY_CHIPS : [{ label: '📸 Try another selfie', action: { type: 'scan' } }, ...(ctx.current.selfie ? [] : [{ label: '✨ Use demo selfie', action: { type: 'demoSelfie' } as Action }])])
       } finally {
         setBusy('idle')
         abortRef.current = null
@@ -230,6 +240,7 @@ export function useMira() {
       } catch (err) {
         t.set(0, 'fail')
         await say(err instanceof ApiError ? err.message : 'that one failed, try again?')
+        if (needsKey(err)) setChips(KEY_CHIPS)
       } finally {
         setBusy('idle')
       }
@@ -269,6 +280,7 @@ export function useMira() {
       } catch (err) {
         t.set(1, 'fail')
         await say(err instanceof ApiError ? err.message : 'that try on failed, try again?')
+        if (needsKey(err)) setChips(KEY_CHIPS)
       } finally {
         setBusy('idle')
       }
@@ -325,6 +337,12 @@ export function useMira() {
       else if (a.type === 'demoBody') {
         ctx.current.pending = 'body'
         await sendPhoto(DEMO_BODY)
+      } else if (a.type === 'addKey') setKeySheet(true)
+      else if (a.type === 'demoMode') {
+        settings.setDemo(true)
+        setLive(false)
+        await say('demo mode on ✨ results are previews until you add a YouCam key. try it out 👇')
+        setChips(START_CHIPS)
       } else if (a.type === 'say') await sendText(a.text)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -364,5 +382,18 @@ export function useMira() {
 
   const cancel = useCallback(() => abortRef.current?.abort(), [])
 
-  return { msgs, typing, busy, chips, live, sendText, sendPhoto, act, tryShade, tryGarment, cancel }
+  // Called by the key sheet after the user saves or clears their own YouCam key.
+  const keySaved = useCallback(
+    async (hasOwn: boolean) => {
+      setKeySheet(false)
+      if (hasOwn) settings.setDemo(false)
+      const h = await api.health().catch(() => ({ live: false }))
+      setLive(h.live)
+      await say(hasOwn ? "got your YouCam key 🔑 i'll run everything live on your units now" : 'key removed, back to the shared units')
+      setChips(START_CHIPS)
+    },
+    [say],
+  )
+
+  return { msgs, typing, busy, chips, live, keySheet, setKeySheet, keySaved, sendText, sendPhoto, act, tryShade, tryGarment, cancel }
 }

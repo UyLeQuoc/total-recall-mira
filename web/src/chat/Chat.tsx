@@ -3,6 +3,8 @@ import { useMira, type Msg, type Step } from './useMira'
 import { Blob, ProductArt, Lipstick } from '../ui/Art'
 import { CONCERN_LABEL, best, saved } from '../data/catalog'
 import type { Profile } from '../lib/memory'
+import { settings } from '../lib/api'
+import QRCode from 'qrcode'
 import './chat.css'
 
 export default function Chat() {
@@ -10,6 +12,15 @@ export default function Chat() {
   const [draft, setDraft] = useState('')
   const [sheet, setSheet] = useState(false)
   const [viewer, setViewer] = useState<string | null>(null)
+  const [qr, setQr] = useState<string | null>(null)
+
+  // Desktop has no selfie camera, so hand the chat to the phone: scan, then shoot there.
+  const showQr = async () => {
+    setSheet(false)
+    const local = /^(localhost|127\.|\[::1\])/.test(location.hostname)
+    const url = (local ? 'https://mira-production-110e.up.railway.app' : location.origin) + '/#/chat'
+    setQr(await QRCode.toDataURL(url, { margin: 1, width: 440, color: { dark: '#0c0c0d', light: '#ffffff' } }))
+  }
   const scroller = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const camRef = useRef<HTMLInputElement>(null)
@@ -57,7 +68,11 @@ export default function Chat() {
               <div className="im-avatar"><Blob size={44} mood="happy" color="#F59AC9" /></div>
               <div className="im-name">Mira <span>›</span></div>
             </div>
-            {m.live !== null && <span className={`im-mode ${m.live ? 'live' : ''}`}>{m.live ? 'YouCam live' : 'demo mode'}</span>}
+            {m.live !== null && (
+              <button className={`im-mode ${m.live ? 'live' : ''}`} onClick={() => m.setKeySheet(true)} aria-label="YouCam key settings">
+                {m.live ? 'YouCam live' : 'demo mode'} 🔑
+              </button>
+            )}
           </header>
 
           <div className="thread" ref={scroller} aria-live="polite">
@@ -102,11 +117,25 @@ export default function Chat() {
               <button onClick={() => fileRef.current?.click()}><span>🖼️</span>Photos</button>
               <button onClick={() => { setSheet(false); m.act({ type: 'demoSelfie' }) }}><span>🙂</span>Demo selfie</button>
               <button onClick={() => { setSheet(false); m.act({ type: 'demoBody' }) }}><span>🧍</span>Demo full body</button>
+              <button className="wide" onClick={showQr}><span>📱</span>Use my phone camera (QR)</button>
             </div>
           )}
           <input ref={fileRef} type="file" accept="image/jpeg,image/png" hidden onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = '' }} />
           <input ref={camRef} type="file" accept="image/*" capture="user" hidden onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = '' }} />
           <div className="home-indicator" />
+
+          {m.keySheet && <KeySheet onClose={() => m.setKeySheet(false)} onSaved={m.keySaved} />}
+
+          {qr && (
+            <div className="modal" role="dialog" aria-label="Continue on your phone" onClick={() => setQr(null)}>
+              <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+                <div className="card-title">Scan with your iPhone camera</div>
+                <div className="card-sub">Opens Mira on your phone so you can take a real selfie and upload it</div>
+                <img className="qr" src={qr} alt="QR code that opens Mira chat" />
+                <button className="try" onClick={() => setQr(null)}>Done</button>
+              </div>
+            </div>
+          )}
 
           {viewer && (
             <div className="viewer" onClick={() => setViewer(null)} role="dialog" aria-label="Photo">
@@ -318,6 +347,29 @@ function MemoryCard({ p }: { p: Profile }) {
           {p.history.map((h, i) => <i key={i} style={{ height: `${h.score}%` }} title={`${h.date}: ${h.score}`} />)}
         </div>
       )}
+    </div>
+  )
+}
+
+function KeySheet({ onClose, onSaved }: { onClose: () => void; onSaved: (hasOwn: boolean) => void }) {
+  const [value, setValue] = useState(settings.key())
+  const save = () => {
+    settings.setKey(value)
+    onSaved(Boolean(value.trim()))
+  }
+  return (
+    <div className="modal" role="dialog" aria-label="YouCam API key" onClick={onClose}>
+      <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); save() }}>
+        <div className="card-title">Use your own YouCam key</div>
+        <div className="card-sub">
+          Get a free key at <a href="https://yce.perfectcorp.com" target="_blank" rel="noreferrer">yce.perfectcorp.com</a> (Account, API Key). It stays on this device and is sent only with your own requests.
+        </div>
+        <input className="key-input" type="password" autoComplete="off" spellCheck={false} placeholder="sk-..." value={value} onChange={(e) => setValue(e.target.value)} aria-label="YouCam API key" autoFocus />
+        <div className="modal-actions">
+          <button type="button" className="ghost" onClick={() => { setValue(''); settings.setKey(''); onSaved(false) }}>Remove key</button>
+          <button type="submit" className="try" disabled={!value.trim()}>Save key</button>
+        </div>
+      </form>
     </div>
   )
 }

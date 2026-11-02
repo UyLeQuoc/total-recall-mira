@@ -5,7 +5,7 @@ import { readFile, stat, mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hasKey, uploadImage, runTask, resultUrl, parseSkin, SKIN_ACTIONS, YouCamError } from './youcam.mjs'
+import { hasKey, requestKey, uploadImage, runTask, resultUrl, parseSkin, SKIN_ACTIONS, YouCamError } from './youcam.mjs'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(root, '..', 'web', 'dist')
@@ -173,7 +173,11 @@ http
     const t0 = Date.now()
     try {
       const body = await readJson(req)
-      const out = await cached(name, body, () => handlers[name](body))
+      // X-Mira-Demo forces demo mode; X-YouCam-Key runs this request on the user's own key.
+      const userKey = String(req.headers['x-youcam-key'] || '').trim().slice(0, 200)
+      const demo = req.headers['x-mira-demo'] === '1'
+      const run = () => cached(name, body, () => handlers[name](body))
+      const out = await requestKey.run(demo ? '' : userKey || undefined, run)
       console.log(`[api] ${name} ok ${Date.now() - t0}ms${out.mock ? ' (demo)' : ''}${out.cached ? ' (cached)' : ''}`)
       send(res, 200, out)
     } catch (err) {
