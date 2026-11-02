@@ -21,8 +21,8 @@ const plan = [
   { kind: 'card', id: 'problem', html: problemCard(), say: 'People wonder about their skin right before a purchase. Today that means a quiz, a guess, a lipstick that looked better on the model, and paying full price. Mira turns that moment into one text.' },
   { kind: 'clip', id: 'landing', from: at('landing') + 0.5, to: at('chat_open'), cap: 'Reads your skin. Tries it on you. Checks every store.', say: 'Mira reads your skin, tries everything on you, and checks every store, so you buy the right thing for less.' },
   { kind: 'clip', id: 'scan', from: at('chat_open'), to: at('skin_report'), cap: 'One selfie starts the agent', say: 'Send one selfie. Mira plans the work, and streams every step of the agent into the chat.' },
-  { kind: 'clip', id: 'skin', from: at('skin_report'), to: at('auto_tryon'), cap: 'YouCam AI Skin Analysis: 8 concerns, skin age, matched picks, best price', say: 'YouCam A.I. Skin Analysis scores eight concerns and estimates skin age. Mira picks one product for each of your three weakest scores, with reviews, sources, and the best price across three stores.' },
-  { kind: 'clip', id: 'auto', from: at('auto_tryon'), to: at('typed_question'), cap: 'Unprompted: YouCam Makeup VTO tries the best shade on you', say: 'Then, without being asked, it picks a lip shade from your redness score, and tries it on your face with YouCam Makeup V.T.O.' },
+  { kind: 'clip', id: 'skin', from: at('skin_report'), to: at('skin_report') + 2.8, cap: 'YouCam AI Skin Analysis: 8 concerns, skin age, matched picks, best price', say: 'YouCam A.I. Skin Analysis scores eight concerns and estimates skin age. Mira picks one product for each of your three weakest scores, with reviews, sources, and the best price across three stores.' },
+  { kind: 'clip', id: 'auto', from: at('skin_report') + 2.8, to: at('typed_question'), cap: 'Unprompted: YouCam Makeup VTO tries the best shade on you', say: 'Then, without being asked, it picks a lip shade from your redness score, and tries it on your face with YouCam Makeup V.T.O.' },
   { kind: 'clip', id: 'typed', from: at('typed_question'), to: at('outfit'), cap: 'Just text it. Tap any shade to see it on you', say: 'You can just text it. Ask for a bolder lip, and tap any shade to see it on you, with the cheapest store already found.' },
   { kind: 'clip', id: 'outfit', from: at('outfit'), to: at('memory'), cap: 'YouCam AI Clothes puts the full look on your body', say: 'Ask for an outfit, send a full body photo, and YouCam A.I. Clothes dresses you in the look, paired with the shade you just picked.' },
   { kind: 'clip', id: 'memory', from: at('memory'), to: at('end'), cap: 'Learns how you shop, stored on your phone', say: 'Mira remembers your skin type, your shade, your score history, and how much it saved you, so every chat starts smarter.' },
@@ -68,8 +68,9 @@ for (const s of plan) {
       `[0:v]scale=1280:720,fps=30,format=yuv420p,fade=in:st=0:d=0.3[v];${aFilter}`, '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '18', '-c:a', 'aac', '-t', len.toFixed(2), out)
   } else {
     const clipLen = s.to - s.from
+    const slow = Math.min(1.8, Math.max(1, len / clipLen))
     ff('-i', SRC, ...audio, '-i', `${WORK}/${s.id}.png`, '-filter_complex',
-      `[0:v]trim=start=${s.from.toFixed(2)}:end=${s.to.toFixed(2)},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${Math.max(0, len - clipLen + 0.1).toFixed(2)},format=yuv420p[base];[base][2:v]overlay=0:0[v];${aFilter}`,
+      `[0:v]trim=start=${s.from.toFixed(2)}:end=${s.to.toFixed(2)},setpts=(PTS-STARTPTS)*${slow.toFixed(3)},tpad=stop_mode=clone:stop_duration=${Math.max(0, len - clipLen * slow + 0.1).toFixed(2)},format=yuv420p[base];[base][2:v]overlay=0:0[v];${aFilter}`,
       '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '18', '-c:a', 'aac', '-t', len.toFixed(2), out)
   }
   parts.push(out)
@@ -112,7 +113,7 @@ function blobSvg(color, mood) {
   return `<svg viewBox="0 0 100 100" width="150" height="150"><polygon points="${pts.join(' ')}" fill="${color}" stroke="${color}" stroke-width="6" stroke-linejoin="round"/><g stroke="#1b1b1f" stroke-width="4.5" fill="none" stroke-linecap="round">${face}</g></svg>`
 }
 function titleCard() {
-  return `<div class="card"><div class="blob" style="left:180px;top:70px">${blobSvg('#F59AC9', 'happy')}</div><div class="blob" style="right:170px;top:330px">${blobSvg('#9BE15D', 'squint')}</div>
+  return `<div class="card"><div class="blob" style="left:180px;top:70px">${blobSvg('#F59AC9', 'happy')}</div><div class="blob" style="right:150px;top:90px">${blobSvg('#9BE15D', 'squint')}</div>
   <h1>Meet Mira</h1><p>Your free AI beauty &amp; style assistant, right in iMessage</p>
   <div class="pills"><span>YouCam AI Skin Analysis</span><span>YouCam Makeup VTO</span><span>YouCam AI Clothes</span></div></div>`
 }
