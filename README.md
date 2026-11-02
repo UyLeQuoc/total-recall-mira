@@ -74,7 +74,11 @@ The YouCam key never reaches the browser. `server/youcam.mjs` implements the doc
 
 ## Demo mode
 
-The submission video was recorded in demo mode (no `YOUCAM_API_KEY`), and the app labels it as such in the header ("demo mode") and on every result ("demo preview"). In demo mode the server returns deterministic skin scores per photo, the bundled demo selfie gets a local lip tint preview, and the outfit card previews the garment reference. Set `YOUCAM_API_KEY` and the same UI calls YouCam Skin Analysis, Makeup VTO and AI Clothes for real; nothing else changes.
+The submission video was recorded live against the YouCam API (the header badge reads "YouCam live"): every skin score, heat map, lip try-on and outfit in it is a real YouCam result. Measured on the demo photos: Skin Analysis about 6 to 9 s, Makeup VTO about 8 s, AI Clothes about 14 s, end to end including upload and polling.
+
+Without a `YOUCAM_API_KEY` the app still runs, in a clearly labelled demo mode ("demo mode" in the header, "demo preview" on results): the server returns deterministic skin scores per photo, the bundled demo selfie gets a local lip tint preview, and the outfit card previews the garment reference.
+
+If a selfie is rejected because the face is too small (YouCam needs the face to cover over 60% of the width), the agent zooms toward the face and retries once on its own before asking the user for a closer photo.
 
 To re-record the video: start the server (`npm start`), then run `node scripts/record-demo.mjs` and `node scripts/make-video.mjs` (macOS, needs ffmpeg and Playwright Chromium). Output lands in `artifacts/mira-demo.mp4`.
 

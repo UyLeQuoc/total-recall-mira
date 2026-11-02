@@ -1,7 +1,7 @@
 // Mira API server: keeps the YouCam key server side, proxies the three skills the agent uses,
 // and serves the built web app. Runs in demo mode (deterministic mock results) when no key is set.
 import http from 'node:http'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, stat, mkdir, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,6 +11,7 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(root, '..', 'web', 'dist')
 const PORT = Number(process.env.PORT || 8787)
 const MAX_BODY = 14 * 1024 * 1024
+const CACHE = path.join(root, '..', '.cache')
 
 try {
   const env = await readFile(path.join(root, '..', '.env'), 'utf8')
@@ -49,6 +50,37 @@ function seeded(buf) {
   const h = createHash('sha256').update(buf).digest()
   let i = 0
   return (lo, hi) => lo + (h[i++ % h.length] % (hi - lo + 1))
+}
+
+// Identical requests (same photo, same effect) reuse the stored YouCam result instead of
+// spending units again. Result images are downloaded because YouCam URLs expire after 2 hours.
+async function cached(name, body, run) {
+  const key = createHash('sha256').update(name + JSON.stringify(body)).digest('hex').slice(0, 24)
+  const file = path.join(CACHE, `${key}.json`)
+  try {
+    return { ...JSON.parse(await readFile(file, 'utf8')), cached: true }
+  } catch {
+    // not cached yet
+  }
+  const out = await run()
+  if (out.mock) return out
+  await mkdir(path.join(CACHE, 'files'), { recursive: true })
+  const keep = async (url, suffix) => {
+    if (!url?.startsWith('http')) return url
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return url
+      const name = `${key}-${suffix}.jpg`
+      await writeFile(path.join(CACHE, 'files', name), Buffer.from(await res.arrayBuffer()))
+      return `/cache/${name}`
+    } catch {
+      return url
+    }
+  }
+  if (out.url) out.url = await keep(out.url, 'result')
+  if (out.concerns) for (const c of out.concerns) c.mask = await keep(c.mask, c.type)
+  await writeFile(file, JSON.stringify(out))
+  return out
 }
 
 const handlers = {
@@ -121,14 +153,25 @@ async function serveStatic(req, res) {
 http
   .createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x')
+    if (url.pathname.startsWith('/cache/')) {
+      const name = path.basename(url.pathname)
+      try {
+        const buf = await readFile(path.join(CACHE, 'files', name))
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' })
+        return res.end(buf)
+      } catch {
+        return send(res, 404, { error: 'not_found' })
+      }
+    }
     if (url.pathname === '/api/health') return send(res, 200, { ok: true, live: hasKey() })
     const name = url.pathname.match(/^\/api\/(skin|makeup|cloth)$/)?.[1]
     if (!name) return serveStatic(req, res)
     if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' })
     const t0 = Date.now()
     try {
-      const out = await handlers[name](await readJson(req))
-      console.log(`[api] ${name} ok ${Date.now() - t0}ms${out.mock ? ' (demo)' : ''}`)
+      const body = await readJson(req)
+      const out = await cached(name, body, () => handlers[name](body))
+      console.log(`[api] ${name} ok ${Date.now() - t0}ms${out.mock ? ' (demo)' : ''}${out.cached ? ' (cached)' : ''}`)
       send(res, 200, out)
     } catch (err) {
       console.error(`[api] ${name} failed`, err.code, err.message)

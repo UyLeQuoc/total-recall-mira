@@ -5,3 +5,4 @@ artifacts/raw
 .DS_Store
 artifacts/work
 artifacts/*.mp4
+.cache

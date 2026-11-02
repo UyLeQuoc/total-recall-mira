@@ -1,8 +1,8 @@
 // Demo mode only: a local lip tint preview for the bundled demo selfie, so the UI can be
 // explored without a YouCam key. Real photos and live mode always use YouCam Makeup VTO.
 
-const DEMO_SIZE = { w: 720, h: 849 }
-const LIPS = { cx: 365, cy: 317, rx: 34, ry: 15 }
+const DEMO_SIZE = { w: 640, h: 759 }
+const LIPS = { cx: 303, cy: 491, rx: 80, ry: 35 }
 
 export async function demoLipPreview(src: string, color: string, gloss: boolean): Promise<string | null> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -17,7 +17,7 @@ export async function demoLipPreview(src: string, color: string, gloss: boolean)
   mask.width = img.naturalWidth
   mask.height = img.naturalHeight
   const m = mask.getContext('2d')!
-  m.filter = 'blur(3px)'
+  m.filter = 'blur(6px)'
   m.fillStyle = color
   m.beginPath()
   m.ellipse(LIPS.cx, LIPS.cy, LIPS.rx, LIPS.ry, 0, 0, Math.PI * 2)
@@ -40,7 +40,7 @@ export async function demoLipPreview(src: string, color: string, gloss: boolean)
     o.filter = 'blur(2px)'
     o.fillStyle = '#fff'
     o.beginPath()
-    o.ellipse(LIPS.cx + 4, LIPS.cy + 7, 12, 3, 0, 0, Math.PI * 2)
+    o.ellipse(LIPS.cx + 9, LIPS.cy + 16, 28, 7, 0, 0, Math.PI * 2)
     o.fill()
   }
   return out.toDataURL('image/jpeg', 0.92)

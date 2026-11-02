@@ -27,7 +27,7 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
 }
 
 function friendly(code?: string, message?: string) {
-  const c = code || ''
+  const c = (code || '').toLowerCase()
   if (c.includes('face') && c.includes('small')) return 'Your face looks a bit far away. Try a closer selfie, face filling most of the frame.'
   if (c.includes('face')) return "I couldn't find a clear, front facing face. Try again looking straight at the camera."
   if (c.includes('lighting')) return 'It is a little dark. Try again near a window.'
@@ -70,4 +70,25 @@ export async function prepareImage(src: string | Blob, opts: { minShort?: number
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
   if (typeof src !== 'string') URL.revokeObjectURL(url)
   return canvas.toDataURL('image/jpeg', 0.9)
+}
+
+// Crops toward the face (center, upper part) so it fills more of the frame; YouCam Skin AI
+// needs the face to cover over 60% of the image width.
+export async function zoomToFace(src: string) {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const i = new Image()
+    i.onload = () => resolve(i)
+    i.onerror = reject
+    i.src = src
+  })
+  const w = img.naturalWidth * 0.5
+  const h = Math.min(img.naturalHeight, w * 1.2)
+  const x = (img.naturalWidth - w) / 2
+  const y = Math.max(0, img.naturalHeight * 0.38 - h / 2)
+  const canvas = document.createElement('canvas')
+  const scale = Math.max(1, 640 / w)
+  canvas.width = Math.round(w * scale)
+  canvas.height = Math.round(h * scale)
+  canvas.getContext('2d')!.drawImage(img, x, y, w, h, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.92)
 }

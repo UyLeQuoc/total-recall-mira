@@ -106,6 +106,8 @@ export function parseSkin(data) {
       overall = item.score ?? item.ui_score ?? null
       continue
     }
+    // Only keep scored concerns; the API also returns helper rows such as resize_image.
+    if (!SKIN_ACTIONS.includes(item.type) && !item.type?.startsWith('hd_')) continue
     const prev = byType.get(item.type)
     // Region split concerns report several rows; prefer the "whole" region.
     if (!prev || item.region === 'whole') {

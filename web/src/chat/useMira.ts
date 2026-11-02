@@ -2,7 +2,7 @@
 // product matching, price check, YouCam Makeup or Clothes VTO), streamed into the thread as
 // iMessage bubbles with a visible step trace.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, ApiError, prepareImage, type SkinReport } from '../lib/api'
+import { api, ApiError, prepareImage, zoomToFace, type SkinReport } from '../lib/api'
 import { demoLipPreview } from '../lib/demoTint'
 import { loadProfile, saveProfile, type Profile } from '../lib/memory'
 import { CONCERN_LABEL, GARMENTS, LIP_SHADES, SKIN_PRODUCTS, best, lipEffect, saved, type Garment, type LipShade, type SkinProduct } from '../data/catalog'
@@ -38,7 +38,7 @@ type Busy = 'idle' | 'thinking' | 'working'
 
 const uid = () => Math.random().toString(36).slice(2, 10)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-export const DEMO_SELFIE = '/samples/selfie.jpg'
+export const DEMO_SELFIE = '/samples/selfie-face.jpg'
 export const DEMO_BODY = '/samples/person-full.jpg'
 
 const START_CHIPS: Chip[] = [
@@ -130,11 +130,20 @@ export function useMira() {
       ])
       try {
         t.set(0, 'run')
-        const img = await prepareImage(photo, { minShort: 640, maxLong: 1600 })
-        ctx.current.selfie = img
+        let img = await prepareImage(photo, { minShort: 640, maxLong: 1600 })
         t.set(0, 'done')
         t.set(1, 'run')
-        const report = await api.skin(img, ac.signal)
+        let report: SkinReport
+        try {
+          report = await api.skin(img, ac.signal)
+        } catch (err) {
+          // Self-heal once: a selfie taken at arm's length is the most common rejection.
+          if (!(err instanceof ApiError) || !err.code.includes('too_small')) throw err
+          t.set(1, 'run', 'face too far, zooming in and retrying')
+          img = await zoomToFace(img)
+          report = await api.skin(img, ac.signal)
+        }
+        ctx.current.selfie = img
         ctx.current.report = report
         t.set(1, 'done', `${report.concerns.length} concerns scored`)
         t.set(2, 'run')

@@ -30,6 +30,8 @@ Mira is an AI beauty and style assistant that lives in an iMessage thread.
 
 Each YouCam feature has its own input window (minimum short side for skin, maximum long side for makeup, full body pose for clothes), so the client re-encodes every photo to fit the feature it is about to call, and the server maps YouCam error codes (face too small, lighting too dark, pose) to friendly, actionable replies instead of a generic failure.
 
+The most common rejection is a selfie taken at arm's length (YouCam needs the face to cover over 60% of the image width), so the agent heals itself: it zooms toward the face and retries once, and the step trace says so, before it ever asks the user for another photo.
+
 ## What we learned
 
 The best moment to use Skin AI is the moment right before a purchase, and the best way to sell a try-on is not to ask for permission: when the agent already has your face and your scores, showing the result unprompted turns a feature into a conversation.
@@ -40,7 +42,7 @@ A real catalog and price feed, YouCam Skin Tone analysis to pick foundation and 
 
 ## Try it
 
-Clone the repo, add a `YOUCAM_API_KEY` to `.env`, then `npm --prefix web install && npm run build && npm start` and open `http://localhost:8787`. Without a key the app runs in a clearly labelled demo mode (mock skin scores, local lip tint preview on the bundled demo selfie, garment reference preview), which is the mode the demo video was recorded in. On an iPhone, open the page in Safari and add it to the home screen for the full screen iMessage feel.
+Clone the repo, add a `YOUCAM_API_KEY` to `.env`, then `npm --prefix web install && npm run build && npm start` and open `http://localhost:8787`. The demo video was recorded live against the YouCam API, so every score, heat map and try-on shown is a real YouCam result. Without a key the app still runs in a clearly labelled demo mode (mock skin scores, local lip tint preview on the bundled demo selfie, garment reference preview). On an iPhone, open the page in Safari and add it to the home screen for the full screen iMessage feel.
 
 ## Built with
 
