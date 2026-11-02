@@ -42,7 +42,7 @@ A real catalog and price feed, YouCam Skin Tone analysis to pick foundation and 
 
 ## Try it
 
-Clone the repo, add a `YOUCAM_API_KEY` to `.env`, then `npm --prefix web install && npm run build && npm start` and open `http://localhost:8787`. The demo video was recorded live against the YouCam API, so every score, heat map and try-on shown is a real YouCam result. Without a key the app still runs in a clearly labelled demo mode (mock skin scores, local lip tint preview on the bundled demo selfie, garment reference preview). On an iPhone, open the page in Safari and add it to the home screen for the full screen iMessage feel.
+Clone the repo, add a `YOUCAM_API_KEY` to `.env`, then `npm --prefix web install && npm run build && npm start` and open `http://localhost:8787`. Live app: https://mira-production-110e.up.railway.app. All three features were verified against the live YouCam API; the demo video was recorded in demo mode because the trial units ran out while filming. Without a key the app still runs in a clearly labelled demo mode (mock skin scores, local lip tint preview on the bundled demo selfie, garment reference preview). On an iPhone, open the page in Safari and add it to the home screen for the full screen iMessage feel.
 
 ## Built with
 

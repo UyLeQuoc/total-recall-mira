@@ -21,6 +21,9 @@ try {
   }
 } catch {}
 
+// YOUCAM_DEMO=1 forces demo mode even when .env holds a key (used for offline recordings).
+if (process.env.YOUCAM_DEMO === '1') delete process.env.YOUCAM_API_KEY
+
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.webp': 'image/webp', '.json': 'application/json', '.webmanifest': 'application/manifest+json' }
 
 function send(res, status, obj) {

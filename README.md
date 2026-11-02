@@ -2,6 +2,8 @@
 
 Mira is a shopping assistant you text like a friend. Send one selfie and Mira reads your skin with **YouCam AI Skin Analysis**, matches products to your three weakest scores, checks three stores for the best price, and then tries the best lip shade on your own face with **YouCam Makeup VTO** before you ask. Ask for a full look and Mira dresses your full body photo with **YouCam AI Clothes**. Everything happens inside an iMessage style thread that runs on iPhone Safari (add it to the home screen for a full screen app) and on desktop inside a phone frame.
 
+**Live:** https://mira-production-110e.up.railway.app (chat at `/#/chat`)
+
 Built for the YouCam API Skin AI and eCommerce VTO Hackathon (both tracks: Skin AI and eCommerce VTO, working as one flow).
 
 ## Why it matters
@@ -74,13 +76,13 @@ The YouCam key never reaches the browser. `server/youcam.mjs` implements the doc
 
 ## Demo mode
 
-The submission video was recorded live against the YouCam API (the header badge reads "YouCam live"): every skin score, heat map, lip try-on and outfit in it is a real YouCam result. Measured on the demo photos: Skin Analysis about 6 to 9 s, Makeup VTO about 8 s, AI Clothes about 14 s, end to end including upload and polling.
+All three features were verified live against the YouCam API (the header badge reads "YouCam live"); the deployed app runs live. Our free trial units ran out while filming, so the submission video was recorded in demo mode and says so on screen. Measured live on the demo photos: Skin Analysis about 6 to 9 s, Makeup VTO about 8 s, AI Clothes about 14 s, end to end including upload and polling.
 
 Without a `YOUCAM_API_KEY` the app still runs, in a clearly labelled demo mode ("demo mode" in the header, "demo preview" on results): the server returns deterministic skin scores per photo, the bundled demo selfie gets a local lip tint preview, and the outfit card previews the garment reference.
 
 If a selfie is rejected because the face is too small (YouCam needs the face to cover over 60% of the width), the agent zooms toward the face and retries once on its own before asking the user for a closer photo.
 
-To re-record the video: start the server (`npm start`), then run `node scripts/record-demo.mjs` and `node scripts/make-video.mjs` (macOS, needs ffmpeg and Playwright Chromium). Output lands in `artifacts/mira-demo.mp4`.
+To re-record the video run `./scripts/demo-video.sh` against a running live server, or `DEMO=1 ./scripts/demo-video.sh` for demo mode (macOS, needs ffmpeg and Playwright Chromium). The soundtrack is built from GarageBand Apple Loops (Chillwave pack) and is ducked under the voice; sound effects are synthesized. Drop studio voice files named `assets/voice/<segment>.mp3` (for example from ElevenLabs) to replace the macOS voice. Output lands in `artifacts/mira-demo.mp4`.
 
 ## Notes and limitations
 

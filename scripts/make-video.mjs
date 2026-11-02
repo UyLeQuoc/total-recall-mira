@@ -4,6 +4,7 @@
 import { chromium } from 'playwright'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 
 const RAW = 'artifacts/raw'
 const WORK = 'artifacts/work'
@@ -35,9 +36,16 @@ const SRC = `${WORK}/demo-cfr.mp4`
 ff('-i', `${RAW}/demo.webm`, '-vf', 'fps=30,scale=1280:720', '-g', '15', '-c:v', 'libx264', '-crf', '14', '-an', SRC)
 
 // 1. voiceover
+// Prefers studio voice files in assets/voice/<id>.mp3 (ElevenLabs); falls back to macOS `say`.
 for (const s of plan) {
-  execFileSync('say', ['-v', 'Samantha', '-r', '178', '-o', `${WORK}/${s.id}.aiff`, s.say])
-  s.voice = dur(`${WORK}/${s.id}.aiff`)
+  const studio = `assets/voice/${s.id}.mp3`
+  s.audio = `${WORK}/${s.id}.wav`
+  if (existsSync(studio)) ff('-i', studio, '-ar', '48000', '-ac', '1', s.audio)
+  else {
+    execFileSync('say', ['-v', 'Samantha', '-r', '178', '-o', `${WORK}/${s.id}.aiff`, s.say])
+    ff('-i', `${WORK}/${s.id}.aiff`, '-ar', '48000', '-ac', '1', s.audio)
+  }
+  s.voice = dur(s.audio)
 }
 
 // 2. cards and captions
@@ -61,7 +69,7 @@ const parts = []
 for (const s of plan) {
   const len = Math.max(s.kind === 'card' ? 0 : s.to - s.from, s.voice + 0.8)
   const out = `${WORK}/seg-${s.id}.mp4`
-  const audio = ['-i', `${WORK}/${s.id}.aiff`]
+  const audio = ['-i', s.audio]
   const aFilter = `[1:a]adelay=300|300,apad,atrim=0:${len.toFixed(2)},aformat=sample_rates=48000:channel_layouts=stereo[a]`
   if (s.kind === 'card') {
     ff('-loop', '1', '-t', len.toFixed(2), '-i', `${WORK}/${s.id}.png`, ...audio, '-filter_complex',
@@ -74,10 +82,31 @@ for (const s of plan) {
       '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '18', '-c:a', 'aac', '-t', len.toFixed(2), out)
   }
   parts.push(out)
+  s.len = len
   console.log(s.id, len.toFixed(1) + 's')
 }
 await writeFile(`${WORK}/list.txt`, parts.map((p) => `file '${p.replace(WORK + '/', '')}'`).join('\n'))
-ff('-f', 'concat', '-safe', '0', '-i', `${WORK}/list.txt`, '-c', 'copy', '-movflags', '+faststart', OUT)
+const VOICE_ONLY = `${WORK}/voice-only.mp4`
+ff('-f', 'concat', '-safe', '0', '-i', `${WORK}/list.txt`, '-c', 'copy', VOICE_ONLY)
+
+// 4. GarageBand loop bed ducked under the voice, plus a whoosh on every cut and a ding on reveals.
+const total = dur(VOICE_ONLY)
+const cues = []
+let t = 0
+for (const s of plan) {
+  if (t > 0) cues.push(['whoosh', t - 0.12])
+  if (['title', 'skin', 'auto', 'outfit', 'memory', 'outro'].includes(s.id)) cues.push(['ding', t + (s.kind === 'card' ? 0.25 : 1.2)])
+  t += s.len
+}
+const sfxInputs = cues.flatMap(([name]) => ['-i', `assets/audio/${name}.wav`])
+const sfxChains = cues.map(([, at], i) => `[${i + 2}:a]adelay=${Math.round(at * 1000)}:all=1,volume=0.5[s${i}]`).join(';')
+const sfxLabels = cues.map((_, i) => `[s${i}]`).join('')
+ff('-i', VOICE_ONLY, '-i', 'assets/audio/bed.wav', ...sfxInputs, '-filter_complex',
+  `[0:a]aformat=sample_rates=48000:channel_layouts=stereo,asplit=2[voice][key];` +
+  `[1:a]atrim=0:${total.toFixed(2)},volume=0.32,afade=t=out:st=${(total - 3).toFixed(2)}:d=3[bed];` +
+  `[bed][key]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=350[ducked];` +
+  `${sfxChains};[voice][ducked]${sfxLabels}amix=inputs=${cues.length + 2}:normalize=0:duration=first,alimiter=limit=0.95[mix]`,
+  '-map', '0:v', '-map', '[mix]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', OUT)
 console.log('saved', OUT, dur(OUT).toFixed(1) + 's')
 
 // ---------- templates ----------
