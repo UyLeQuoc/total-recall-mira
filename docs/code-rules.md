@@ -1,9 +1,6 @@
 # Code rules
 
-The stack-neutral part of [Hunch's code rules](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/code-rules.md),
-carried over on 2026-11-03 ([ADR-0001](adr/0001-track-3-from-mira-with-hunchs-kit.md)). Hunch's rules for
-its app layout (shadcn screens and hooks, Hono routes) apply here only if an ADR moves this repo to that
-stack.
+Carried in on 2026-11-03 ([ADR-0001](adr/0001-track-3-from-mira-with-a-memory-and-tatum-kit.md)).
 
 Match these rules in new and changed code. Don't copy a violation because the file next door already does
 it. When you touch a violating file, bring the lines you change into compliance. Don't rewrite the whole

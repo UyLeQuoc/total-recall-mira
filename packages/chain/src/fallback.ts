@@ -1,5 +1,5 @@
 /**
- * Hunch ADR-0004: when Tatum answers 402 (the plan's credits are spent), Sui calls go to a public fullnode's
+ * ADR-0001: when Tatum answers 402 (the plan's credits are spent), Sui calls go to a public fullnode's
  * gRPC for a cool-down, then Tatum gets the next call again. Tatum stays the primary, and health shows
  * the switch. Every other error is Tatum's answer, so it passes through.
  */

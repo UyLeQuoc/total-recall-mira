@@ -54,7 +54,7 @@ describe("tatumSuiOptionsFromEnv", () => {
     });
   });
 
-  it("falls back to the public fullnode unless SUI_GRPC_FALLBACK says otherwise (Hunch ADR-0004)", () => {
+  it("falls back to the public fullnode unless SUI_GRPC_FALLBACK says otherwise (ADR-0001)", () => {
     expect(suiFallbackUrl("mainnet", {})).toBe(publicGrpcUrl("mainnet"));
     expect(suiFallbackUrl("testnet", { SUI_GRPC_FALLBACK_TESTNET: "off" })).toBeNull();
     expect(suiFallbackUrl("mainnet", { SUI_GRPC_FALLBACK: "https://node.example:443" })).toBe(
@@ -123,7 +123,7 @@ describe("PacedTransport", () => {
     expect(seen.timeout).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("counts what it asks Tatum for: requests with retries, and stream frames (Hunch ADR-0003)", async () => {
+  it("counts what it asks Tatum for: requests with retries, and stream frames (ADR-0001)", async () => {
     resetTatumUsage();
     let calls = 0;
     let deliver: (() => void) | null = null;
@@ -159,7 +159,7 @@ describe("PacedTransport", () => {
   });
 });
 
-describe("FallbackTransport (Hunch ADR-0004)", () => {
+describe("FallbackTransport (ADR-0001)", () => {
   const method = { name: "GetObject", service: { typeName: "sui.rpc.v2.LedgerService" } } as never;
   const ok = (value: object) =>
     ({

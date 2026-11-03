@@ -1,399 +1,742 @@
-// Mira's agent loop. Each user turn becomes a small plan of tool calls (YouCam Skin AI,
-// product matching, price check, YouCam Makeup or Clothes VTO), streamed into the thread as
-// iMessage bubbles with a visible step trace.
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, ApiError, prepareImage, settings, zoomToFace, type SkinReport } from '../lib/api'
-import { demoLipPreview } from '../lib/demoTint'
-import { loadProfile, saveProfile, type Profile } from '../lib/memory'
-import { CONCERN_LABEL, GARMENTS, LIP_SHADES, SKIN_PRODUCTS, best, lipEffect, saved, type Garment, type LipShade, type SkinProduct } from '../data/catalog'
+// Mira's agent. Each message becomes one typed intent (`parseMessage`), then a small plan: device ledger
+// math, the "should I buy" rules, pocket moves through the server, and typed facts for Walrus Memory.
+// Nothing here calls a model; recalled memory only ever becomes typed facts (ADR-0002, ADR-0003).
+import { useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
+import {
+  aboutUsd,
+  type Advice,
+  adviseBuy,
+  byCategory,
+  CATEGORY_EMOJI,
+  CATEGORY_LABEL,
+  type CapStatus,
+  capStatus,
+  type Category,
+  type Cents,
+  categorize,
+  deriveHabit,
+  type Fact,
+  factLine,
+  GOAL_EMOJI,
+  type GoalKind,
+  goalPocket,
+  habitChanged,
+  type Intent,
+  isKeyword,
+  keywordOf,
+  type Learned,
+  learn,
+  monthKey,
+  monthSpent,
+  parseMessage,
+  type Pocket,
+  roundAbout,
+  roundFact,
+  type Spend,
+  stamp,
+  startOfMonth,
+  sumSpends,
+  thresholdFor,
+  usd,
+  type Verdict,
+  WEEKDAYS,
+  words,
+} from '@mira/money'
+import { bestOffer, findItem, priciest } from '../data/catalog'
+import { api, ApiError, type CashMode, type Health, type MemoryMode, type Receipt } from '../lib/api'
+import { addFacts, clearDevice, type Device, freshDevice, isCode, loadDevice, type MemoryLine, saveDevice } from '../lib/device'
+import { goalName, monthName } from './describe'
 
 export type Step = { label: string; detail?: string; state: 'todo' | 'run' | 'done' | 'fail' }
 
+export type SpendView = { spend: Spend; left: Cents | null; cap: CapStatus | null }
+export type BudgetView = { month: string; budget: Cents | null; spent: Cents; left: Cents | null; top: Array<[Category, Cents]>; caps: CapStatus[]; carried: boolean }
+export type GoalView = { goal: GoalKind; name: string; target: Cents; saved: Cents | null; by: string | null; spending: Cents | null; preview: boolean }
+export type AdviceView = { item: string; emoji: string; price: Cents; store: string | null; saving: Cents; advice: Advice; goalName: string | null }
+export type MovedView = { cents: Cents; name: string; emoji: string; spending: Cents | null; goal: Cents | null; receipt: Receipt; preview: boolean }
+
 export type Msg =
   | { id: string; from: 'me'; kind: 'text'; text: string }
-  | { id: string; from: 'me'; kind: 'image'; src: string }
   | { id: string; from: 'mira'; kind: 'text'; text: string }
   | { id: string; from: 'mira'; kind: 'trace'; title: string; steps: Step[] }
-  | { id: string; from: 'mira'; kind: 'skin'; report: SkinReport; photo: string }
-  | { id: string; from: 'mira'; kind: 'picks'; items: SkinProduct[] }
-  | { id: string; from: 'mira'; kind: 'shades'; items: LipShade[] }
-  | { id: string; from: 'mira'; kind: 'garments'; items: Garment[] }
-  | { id: string; from: 'mira'; kind: 'tryon'; before: string; after: string; title: string; sub: string; mock: boolean }
-  | { id: string; from: 'mira'; kind: 'memory'; profile: Profile }
+  | { id: string; from: 'mira'; kind: 'spend'; view: SpendView }
+  | { id: string; from: 'mira'; kind: 'budget'; view: BudgetView }
+  | { id: string; from: 'mira'; kind: 'goal'; view: GoalView }
+  | { id: string; from: 'mira'; kind: 'advice'; view: AdviceView }
+  | { id: string; from: 'mira'; kind: 'moved'; view: MovedView }
+  | { id: string; from: 'mira'; kind: 'memory' }
+  | { id: string; from: 'mira'; kind: 'learned'; texts: string[] }
+  | { id: string; from: 'mira'; kind: 'howto' }
+  | { id: string; from: 'mira'; kind: 'help' }
 
 type NewMsg = Msg extends infer M ? (M extends Msg ? Omit<M, 'id'> : never) : never
 
+export type Action = { type: 'say'; text: string } | { type: 'skip'; label: string } | { type: 'buy'; label: string } | { type: 'handoff' }
 export type Chip = { label: string; action: Action }
-export type Action =
-  | { type: 'scan' }
-  | { type: 'outfit' }
-  | { type: 'shades' }
-  | { type: 'memory' }
-  | { type: 'demoSelfie' }
-  | { type: 'demoBody' }
-  | { type: 'addKey' }
-  | { type: 'demoMode' }
-  | { type: 'say'; text: string }
 
-type Pending = 'selfie' | 'body' | null
-type Busy = 'idle' | 'thinking' | 'working'
+export type Modes = { memory: MemoryMode | null; cash: CashMode | null }
 
-const uid = () => Math.random().toString(36).slice(2, 10)
+export type Overview = {
+  budget: Cents | null
+  spent: Cents
+  left: Cents | null
+  goal: { name: string; emoji: string; target: Cents; saved: Cents } | null
+}
+
+const say = (text: string): Chip => ({ label: text, action: { type: 'say', text } })
+const START_CHIPS: Chip[] = [say('budget 400 a month'), say('saving 1200 for tokyo by march'), say('coffee 5.5')]
+const BACK_CHIPS: Chip[] = [say('how am i doing?'), say('should i buy the $48 serum?'), say('what do you know about me?')]
+
+/** What Mira understands, grouped, for the help card and the desktop side panel. */
+export const EXAMPLES: Array<{ title: string; emoji: string; items: string[] }> = [
+  { title: 'Log a spend', emoji: '💬', items: ['coffee 5.5', 'uber 18', 'dinner 84 split 3 ways'] },
+  { title: 'Set your plan', emoji: '🎯', items: ['budget 400 a month', 'saving 1200 for tokyo by march', 'cap eating out at 60 a week'] },
+  { title: 'Ask before you buy', emoji: '🤔', items: ['should i buy the $48 serum?', 'thinking about $120 sneakers'] },
+  { title: 'Teach Mira', emoji: '🧠', items: ['coffee counts as eating out', 'that was groceries'] },
+  { title: 'Check in', emoji: '📊', items: ['how am i doing?', 'move 20 to tokyo', 'what do you know about me?'] },
+]
+
+const uid = () => crypto.randomUUID().slice(0, 8)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-export const DEMO_SELFIE = '/samples/selfie-face.jpg'
-export const DEMO_BODY = '/samples/person-full.jpg'
 
-// Offered whenever YouCam refuses for lack of units or a bad key.
-const KEY_CHIPS: Chip[] = [
-  { label: '🔑 Use my own YouCam key', action: { type: 'addKey' } },
-  { label: '✨ Try demo mode', action: { type: 'demoMode' } },
-]
-const needsKey = (err: unknown) => err instanceof ApiError && /credit|unit|auth|http_401|http_403/i.test(err.code)
+type Setters = {
+  setMsgs: Dispatch<SetStateAction<Msg[]>>
+  setTyping: Dispatch<SetStateAction<boolean>>
+  setBusy: Dispatch<SetStateAction<boolean>>
+  setChips: Dispatch<SetStateAction<Chip[]>>
+  setDevice: Dispatch<SetStateAction<Device>>
+  setModes: Dispatch<SetStateAction<Modes>>
+  setHealth: Dispatch<SetStateAction<Health | null>>
+  setHandoff: Dispatch<SetStateAction<boolean>>
+  dev: MutableRefObject<Device>
+}
 
-const START_CHIPS: Chip[] = [
-  { label: '📸 Scan my skin', action: { type: 'scan' } },
-  { label: '💄 Find my lip shade', action: { type: 'shades' } },
-  { label: '🧥 Try on an outfit', action: { type: 'outfit' } },
-  { label: '🧠 What do you know about me?', action: { type: 'memory' } },
-]
+type PendingAsk = { cents: Cents; category: Category; label: string; verdict: Verdict }
 
-// Makeup VTO call; in demo mode the bundled selfie gets a local tint preview.
-async function makeup(img: string, shade: LipShade, signal?: AbortSignal) {
-  const out = await api.makeup(img, lipEffect(shade), signal)
-  if (!out.mock) return out
-  const preview = await demoLipPreview(img, shade.color, shade.texture === 'gloss').catch(() => null)
-  return { ...out, url: preview || out.url }
+function createAgent(s: Setters) {
+  let started = false
+  let busy = false
+  let flushing = false
+  let pendingAsk: PendingAsk | null = null
+  let cashMode: CashMode | null = null
+  let memoryMode: MemoryMode | null = null
+  let notes: string[] = []
+  let chipsSet = false
+
+  const chips = (list: Chip[]) => {
+    chipsSet = true
+    s.setChips(list)
+  }
+
+  const update = (fn: (d: Device) => Device) => {
+    const next = fn(s.dev.current)
+    if (next === s.dev.current) return
+    s.dev.current = next
+    saveDevice(next)
+    s.setDevice(next)
+  }
+
+  const push = (m: NewMsg) => {
+    const id = uid()
+    s.setMsgs((prev) => [...prev, { ...m, id } as Msg])
+    return id
+  }
+
+  const reply = async (text: string) => {
+    s.setTyping(true)
+    await sleep(Math.min(1000, 300 + text.length * 8))
+    s.setTyping(false)
+    push({ from: 'mira', kind: 'text', text })
+  }
+
+  const trace = (title: string, labels: Array<[string, string?]>) => {
+    const id = push({ from: 'mira', kind: 'trace', title, steps: labels.map(([label, detail]) => ({ label, detail, state: 'todo' as const })) })
+    const set = (i: number, state: Step['state'], detail?: string) =>
+      s.setMsgs((prev) =>
+        prev.map((m) => (m.id === id && m.kind === 'trace' ? { ...m, steps: m.steps.map((st, j) => (j === i ? { ...st, state, detail: detail ?? st.detail } : st)) } : m)),
+      )
+    return { set }
+  }
+
+  const learned = (): Learned => learn(s.dev.current.lines.map((l) => l.fact))
+  const name = (goal: GoalKind) => goalName(goal, s.dev.current.labels)
+
+  // ---------- memory: the outbox and recall ----------
+
+  /** Queues facts for Walrus Memory and notes them for the thread's "remembered" line. */
+  const remember = (facts: Fact[]) => {
+    const rounded = facts.map(roundFact)
+    update((d) => addFacts(d, rounded))
+    notes.push(...rounded.filter((f) => f.kind !== 'month').map(factLine))
+    void flush()
+  }
+
+  const suggestions = (): Chip[] => {
+    const l = learned()
+    if (l.budget === null) return [say('budget 400 a month'), say('coffee 5.5'), say('help')]
+    if (!l.goal) return [say('saving 1200 for tokyo by march'), say('coffee 5.5'), say('help')]
+    return [say('coffee 5.5'), say('should i buy the $48 serum?'), say('how am i doing?')]
+  }
+
+  /** Sends pending facts and follows queued lines until they report a blob (PRD §8.4). */
+  const flush = async () => {
+    if (flushing) return
+    flushing = true
+    try {
+      const user = s.dev.current.user
+      const pending = s.dev.current.lines.filter((l) => l.status === 'pending').slice(0, 20)
+      if (pending.length) {
+        const { jobs } = await api.remember(user, pending.map((l) => l.fact))
+        const sent = new Map(pending.map((l, i) => [l.text, jobs[i]]))
+        update((d) => ({
+          ...d,
+          lines: d.lines.map((l) => {
+            const j = sent.get(l.text)
+            return j ? { ...l, key: j.key, kind: j.kind, status: j.status, blobId: j.blobId } : l
+          }),
+        }))
+      }
+      const waiting = s.dev.current.lines.filter((l) => (l.status === 'queued' || l.status === 'writing') && l.key)
+      if (waiting.length) {
+        const { jobs } = await api.jobs(user, waiting.flatMap((l) => (l.key ? [l.key] : [])))
+        const byKey = new Map(jobs.map((j) => [j.key, j]))
+        update((d) => ({
+          ...d,
+          lines: d.lines.map((l): MemoryLine => {
+            const j = l.key ? byKey.get(l.key) : undefined
+            if (!j) return l
+            if (j.status === 'unknown') return { ...l, status: 'pending', key: null }
+            return { ...l, status: j.status, blobId: j.blobId }
+          }),
+        }))
+      }
+    } catch {
+      // offline or the server restarted: the lines stay pending and go on the next tick
+    } finally {
+      flushing = false
+    }
+  }
+
+  /** Merges every recalled line into the device; returns how many were new to it. */
+  const sync = async (): Promise<number> => {
+    const res = await api.recall(s.dev.current.user)
+    memoryMode = res.mode
+    s.setModes((m) => ({ ...m, memory: res.mode }))
+    let added = 0
+    update((d) => {
+      const byText = new Map(d.lines.map((l) => [l.text, l]))
+      for (const r of res.lines) {
+        const known = byText.get(r.line)
+        if (!known) added++
+        byText.set(r.line, { fact: r.fact, text: r.line, kind: r.kind, key: r.key, status: r.status, blobId: r.blobId ?? known?.blobId ?? null })
+      }
+      const lines = [...byText.values()].map((l): MemoryLine => (l.status === 'failed' ? { ...l, status: 'pending', key: null } : l))
+      return { ...d, lines }
+    })
+    void flush()
+    return added
+  }
+
+  const refreshPockets = async () => {
+    const l = learned()
+    const pockets: Pocket[] = ['spending', ...(l.goal ? [goalPocket(l.goal)] : [])]
+    const res = await api.pockets(s.dev.current.user, pockets)
+    cashMode = res.mode
+    s.setModes((m) => ({ ...m, cash: res.mode }))
+    update((d) => ({ ...d, pockets: { ...d.pockets, ...res.balances } }))
+  }
+
+  // ---------- views ----------
+
+  const budgetView = (): BudgetView => {
+    const l = learned()
+    const now = new Date()
+    const spends = s.dev.current.spends
+    const spent = monthSpent(spends, now, l.month)
+    const caps = (Object.entries(l.caps) as Array<[Category, { cents: Cents; period: 'week' | 'month' }]>).map(([c, cap]) => capStatus(spends, c, cap, now))
+    return {
+      month: now.toLocaleString('en-US', { month: 'long' }),
+      budget: l.budget,
+      spent,
+      left: l.budget === null ? null : l.budget - spent,
+      top: byCategory(spends, startOfMonth(now), now).slice(0, 4),
+      caps,
+      carried: spent !== sumSpends(spends, startOfMonth(now), now),
+    }
+  }
+
+  const goalView = (goal: GoalKind): GoalView | null => {
+    const g = learned().goals[goal]
+    if (!g) return null
+    const pockets = s.dev.current.pockets
+    return { goal, name: name(goal), target: g.cents, saved: pockets[goalPocket(goal)] ?? null, by: g.by, spending: pockets.spending ?? null, preview: cashMode !== 'sui' }
+  }
+
+  // ---------- money moves ----------
+
+  const moveTo = async (goal: GoalKind, cents: Cents): Promise<boolean> => {
+    const n = name(goal)
+    const t = trace(`Moving ${usd(cents)} to ${n}`, [[`Spending → ${n}`, usd(cents)], ['Settle', cashMode === 'sui' ? 'Sui testnet, through Tatum' : 'preview, not on chain']])
+    t.set(0, 'run')
+    try {
+      const res = await api.move(s.dev.current.user, 'spending', goalPocket(goal), cents)
+      cashMode = res.mode
+      t.set(0, 'done')
+      t.set(1, 'done', res.mode === 'sui' ? `confirmed · ${res.receipt.digest.slice(0, 8)}…` : 'preview, not on chain')
+      update((d) => ({ ...d, pockets: { ...d.pockets, ...res.balances } }))
+      const saved = res.balances[goalPocket(goal)] ?? null
+      push({
+        from: 'mira',
+        kind: 'moved',
+        view: { cents, name: n, emoji: GOAL_EMOJI[goal], spending: res.balances.spending ?? null, goal: saved, receipt: res.receipt, preview: res.mode !== 'sui' },
+      })
+      const target = learned().goals[goal]?.cents
+      await reply(`done ✅ ${usd(cents)} is in ${n} now${target && saved !== null ? `: ${usd(saved)} of ${usd(target)} (${Math.round((saved / target) * 100)}%)` : ''}`)
+      return true
+    } catch (err) {
+      t.set(0, 'fail')
+      await reply(err instanceof ApiError ? err.message : "that move didn't go through. try again?")
+      return false
+    }
+  }
+
+  const logSpend = (cents: Cents, totalCents: Cents, split: number, label: string, category?: Category): Spend => {
+    const l = learned()
+    const sorted = category ? { category, keyword: keywordOf(label), source: 'keyword' as const } : categorize(label, l.rules)
+    const now = new Date()
+    const spend: Spend = { id: uid(), at: now.toISOString(), cents, totalCents, split, label, ...sorted }
+    update((d) => ({ ...d, spends: [...d.spends, spend] }))
+    const spends = s.dev.current.spends
+    const left = l.budget === null ? null : l.budget - monthSpent(spends, now, l.month)
+    const cap = l.caps[spend.category]
+    push({ from: 'mira', kind: 'spend', view: { spend, left, cap: cap ? capStatus(spends, spend.category, cap, now) : null } })
+
+    const facts: Fact[] = []
+    const spent = monthSpent(spends, now, l.month)
+    const snapshot = l.month?.month === monthKey(now) ? l.month.cents : null
+    if (snapshot === null || Math.abs(roundAbout(spent) - snapshot) >= 2500) facts.push({ kind: 'month', month: monthKey(now), cents: spent, asOf: stamp(now) })
+    const habit = deriveHabit(spends, spend.category, now)
+    if (habit && habitChanged(l, habit)) facts.push(habit)
+    if (facts.length) remember(facts)
+    return spend
+  }
+
+  // ---------- intents ----------
+
+  const handle = async (intent: Intent) => {
+    const now = new Date()
+    const asOf = stamp(now)
+    switch (intent.kind) {
+      case 'spend': {
+        const spend = logSpend(intent.cents, intent.totalCents, intent.split, intent.label)
+        const l = learned()
+        const cap = l.caps[spend.category]
+        if (intent.split > 1) await reply(`logged your share: ${usd(intent.cents)} of ${usd(intent.totalCents)}, ${intent.split} ways. who was there stays on this phone 🤫`)
+        if (cap) {
+          const st = capStatus(s.dev.current.spends, spend.category, cap, now)
+          if (st.left < 0) await reply(`heads up: that's ${usd(-st.left)} over your ${CATEGORY_LABEL[spend.category]} cap this ${cap.period} 😬`)
+          else if (st.left < cap.cents * 0.2) await reply(`${usd(st.left)} left for ${CATEGORY_LABEL[spend.category]} this ${cap.period}`)
+        }
+        if (spend.source === 'default') await reply(`filed it under other. if it's something else, tell me like “${spend.label.split(' ')[0] ?? 'it'} is treats”`)
+        return
+      }
+      case 'budget': {
+        remember([{ kind: 'budget', cents: intent.cents, asOf }])
+        push({ from: 'mira', kind: 'budget', view: budgetView() })
+        await reply(`done ✅ ${aboutUsd(intent.cents)} a month. every spend you text me shows what's left`)
+        chips(learned().goal ? [say('coffee 5.5'), say('cap eating out at 60 a week')] : [say('saving 1200 for tokyo by march'), say('cap eating out at 60 a week')])
+        return
+      }
+      case 'cap': {
+        remember([{ kind: 'cap', category: intent.category, cents: intent.cents, period: intent.period, asOf }])
+        const st = capStatus(s.dev.current.spends, intent.category, { cents: intent.cents, period: intent.period }, now)
+        await reply(`got it 🧠 ${CATEGORY_LABEL[intent.category]} capped at ${aboutUsd(intent.cents)} a ${intent.period}. ${usd(st.spent)} so far this ${intent.period}. i'll check it before every buy`)
+        return
+      }
+      case 'goal': {
+        remember([{ kind: 'goal', goal: intent.goal, cents: intent.cents, by: intent.by, asOf }])
+        update((d) => ({ ...d, labels: { ...d.labels, [intent.goal]: intent.label } }))
+        const n = name(intent.goal)
+        const t = trace(`Opening your ${n} pocket`, [['Save the goal', 'Walrus Memory'], ['Open pockets', `Spending + ${n}`], ['Add test cash', 'Sui testnet']])
+        t.set(0, 'done', 'saving in the background')
+        t.set(1, 'run')
+        let seeded = false
+        try {
+          const opened = await api.open(s.dev.current.user)
+          cashMode = opened.mode
+          seeded = opened.seeded
+          t.set(1, 'done')
+          t.set(2, 'done', opened.seeded ? `${usd(opened.balances.spending ?? 0)} added${opened.mode === 'sui' ? '' : ' (preview)'}` : 'already has cash')
+          await refreshPockets()
+        } catch (err) {
+          t.set(1, 'fail')
+          t.set(2, 'fail')
+          await reply(err instanceof ApiError ? err.message : "couldn't open your pockets just now")
+        }
+        const view = goalView(intent.goal)
+        if (view) push({ from: 'mira', kind: 'goal', view })
+        await reply(
+          `${GOAL_EMOJI[intent.goal]} ${n}: ${usd(intent.cents)}${intent.by ? ` by ${monthName(intent.by)}` : ''}. ${seeded ? `i put ${usd(s.dev.current.pockets.spending ?? 0)} of test money in Spending. ` : ''}when i talk you out of a buy, that money can go straight into ${n}`,
+        )
+        chips([say('coffee 5.5'), say('should i buy the $48 serum?')])
+        return
+      }
+      case 'correct': {
+        const spends = s.dev.current.spends
+        const target = intent.target
+        const spend = target ? [...spends].reverse().find((sp) => sp.keyword === target || words(sp.label).includes(target)) : spends.at(-1)
+        const keyword = target && isKeyword(target) ? target : (spend?.keyword ?? null)
+        if (spend) update((d) => ({ ...d, spends: d.spends.map((sp) => (sp.id === spend.id ? { ...sp, category: intent.category, source: 'corrected' } : sp)) }))
+        if (keyword) {
+          remember([{ kind: 'rule', keyword, category: intent.category, asOf }])
+          await reply(`${spend ? 'fixed ✅ ' : ''}${keyword} goes under ${CATEGORY_LABEL[intent.category]} from now on. i'll remember that 🧠`)
+        } else if (spend) {
+          await reply(`fixed ✅ “${spend.label}” is ${CATEGORY_LABEL[intent.category]} now. i only learn words i know, so tell me again next time`)
+        } else {
+          await reply('nothing to fix yet. text me a spend first, like “coffee 5.5”')
+        }
+        return
+      }
+      case 'ask':
+        return ask(intent.item, intent.cents)
+      case 'move': {
+        const l = learned()
+        const goal = intent.goal && l.goals[intent.goal] ? intent.goal : l.goal
+        if (!goal) {
+          await reply('start a goal first, like “saving 1200 for tokyo by march”')
+          chips([say('saving 1200 for tokyo by march')])
+          return
+        }
+        await moveTo(goal, intent.cents)
+        return
+      }
+      case 'memory':
+        return showMemory()
+      case 'help':
+        await reply("here's what you can text me. tap any of these to try it 👇")
+        push({ from: 'mira', kind: 'help' })
+        chips([])
+        return
+      case 'summary': {
+        const l = learned()
+        await refreshPockets().catch(() => undefined)
+        push({ from: 'mira', kind: 'budget', view: budgetView() })
+        const view = l.goal ? goalView(l.goal) : null
+        if (view) push({ from: 'mira', kind: 'goal', view })
+        await reply(l.budget === null ? "set a budget and i'll keep score, like “budget 400 a month”" : "here's where you are 👆")
+        return
+      }
+      case 'greet':
+        await reply('hey 👋 what did you spend today?')
+        chips(s.dev.current.spends.length ? BACK_CHIPS : START_CHIPS)
+        return
+      case 'thanks':
+        await reply('anytime 🫶')
+        return
+      case 'unknown':
+        await reply("hmm, i didn't catch that 🙈 i understand messages like these, tap one to try:")
+        push({ from: 'mira', kind: 'help' })
+        chips([])
+        return
+    }
+  }
+
+  const ask = async (itemText: string, listed: Cents | null) => {
+    const l = learned()
+    const item = findItem(itemText)
+    const best = item ? bestOffer(item) : null
+    const price = best && (listed === null || best.cents < listed) ? best.cents : listed
+    if (price === null) {
+      await reply(`how much is it? try “should i buy the $60 ${itemText === 'it' ? 'sneakers' : itemText}?”`)
+      return
+    }
+    const store = best && price === best.cents ? best.store : null
+    const category = item?.category ?? categorize(itemText, l.rules).category
+    const label = item?.name ?? itemText
+    const goal = l.goal
+    const t = trace('Should you buy it?', [
+      ['Price check', item ? `${item.offers.length} stores` : 'your price'],
+      ['Budget and caps', l.budget === null ? 'no budget yet' : undefined],
+      ['What I learned about you', `${l.facts} memories`],
+      [goal ? `Your ${name(goal)} goal` : 'Your goals'],
+    ])
+    for (let i = 0; i < 4; i++) {
+      t.set(i, 'run')
+      await sleep(180)
+      t.set(i, 'done')
+    }
+    const advice = adviseBuy({ cents: price, category }, { learned: l, spends: s.dev.current.spends, now: new Date() })
+    push({
+      from: 'mira',
+      kind: 'advice',
+      view: { item: label, emoji: item?.emoji ?? CATEGORY_EMOJI[category], price, store, saving: item && store ? priciest(item).cents - price : 0, advice, goalName: goal ? name(goal) : null },
+    })
+    pendingAsk = { cents: price, category, label: item?.id ?? (itemText.split(' ').at(-1) || 'something'), verdict: advice.verdict }
+    const where = store ? ` at ${store} for ${usd(price)}` : ''
+    const learnedWhy = advice.reasons.find((r) => r.kind === 'threshold' && r.threshold.learned)
+    if (advice.verdict === 'go') await reply(`go for it 💚 it fits${where ? `. grab it${where}` : ''}`)
+    else if (advice.verdict === 'think') await reply(learnedWhy ? `hmm 🤔 last time you skipped one like this. think twice?` : `hmm 🤔 think twice?${where ? ` if you do get it, it's cheapest${where}` : ''}`)
+    else await reply(`i'd skip this one 🙅${where ? ` (even at ${usd(price)})` : ''}`)
+    const skipLabel = goal ? `skip it, move ${usd(price)} to ${name(goal)}` : 'skip it'
+    const chip = (label: string, type: 'skip' | 'buy'): Chip => ({ label, action: { type, label } })
+    chips(advice.verdict === 'go' ? [chip('buy it', 'buy'), chip(skipLabel, 'skip')] : [chip(skipLabel, 'skip'), chip('buy anyway', 'buy')])
+  }
+
+  const nudged = (ask: PendingAsk, outcome: 'skipped' | 'bought'): { before: number | null; after: number | null } => {
+    const before = thresholdFor(learned(), ask.category)?.cents ?? null
+    if (ask.verdict !== 'go') remember([{ kind: 'nudge', category: ask.category, cents: ask.cents, outcome, asOf: stamp(new Date()) }])
+    const after = thresholdFor(learned(), ask.category)?.cents ?? null
+    return { before, after }
+  }
+
+  const skip = async (label: string) => {
+    const ask = pendingAsk
+    pendingAsk = null
+    if (!ask) return
+    push({ from: 'me', kind: 'text', text: label })
+    const goal = learned().goal
+    const change = nudged(ask, 'skipped')
+    if (goal) await moveTo(goal, ask.cents)
+    else await reply("skipped ✓ that's money you didn't spend")
+    if (change.after !== null && (change.before === null || change.after < change.before)) {
+      await reply(`🧠 noted: you skipped a ${CATEGORY_LABEL[ask.category]} buy of ${aboutUsd(ask.cents)}, so i'll flag ${CATEGORY_LABEL[ask.category]} from ${usd(change.after)} now`)
+    }
+    chips(BACK_CHIPS)
+  }
+
+  const buy = async (label: string) => {
+    const ask = pendingAsk
+    pendingAsk = null
+    if (!ask) return
+    push({ from: 'me', kind: 'text', text: label })
+    const change = nudged(ask, 'bought')
+    logSpend(ask.cents, ask.cents, 1, ask.label, ask.category)
+    await reply('logged it 💳 enjoy!')
+    if (change.after !== null && change.before !== null && change.after > change.before) {
+      await reply(`🧠 you've bought past my nudge twice, so i'll only flag ${CATEGORY_LABEL[ask.category]} from ${usd(change.after)} now`)
+    }
+    chips(BACK_CHIPS)
+  }
+
+  const showMemory = async () => {
+    const lines = s.dev.current.lines
+    if (!lines.length) {
+      await reply("nothing yet! set a budget or a goal and i'll start learning")
+      chips(START_CHIPS)
+      return
+    }
+    await reply(
+      `${lines.length} thing${lines.length === 1 ? '' : 's'} i've learned. each one is a short line in ${memoryMode === 'walrus' ? 'Walrus Memory' : 'memory preview (this server has no Walrus account)'}: no names, no exact amounts`,
+    )
+    push({ from: 'mira', kind: 'memory' })
+  }
+
+  // ---------- greetings ----------
+
+  const welcomeBack = async () => {
+    const l = learned()
+    const now = new Date()
+    const parts: string[] = []
+    if (l.goal) {
+      const saved = s.dev.current.pockets[goalPocket(l.goal)]
+      const target = l.goals[l.goal]?.cents
+      parts.push(`still saving for ${name(l.goal)}? ${saved !== undefined && target ? `${usd(saved)} of ${usd(target)} so far` : ''}`.trim())
+    }
+    if (l.budget !== null) parts.push(`${usd(l.budget - monthSpent(s.dev.current.spends, now, l.month))} left this month`)
+    const today = WEEKDAYS[(now.getDay() + 6) % 7]
+    const habit = (Object.entries(l.habits) as Array<[Category, { cents: Cents; days: string[] }]>).find(([, h]) => today && h.days.includes(today))
+    if (habit) parts.push(`it's ${today}, and ${CATEGORY_LABEL[habit[0]]} usually runs you ${aboutUsd(habit[1].cents)} a week`)
+    await reply(`welcome back 👋 ${parts.join(' · ') || 'what did you spend today?'}`)
+    chips(BACK_CHIPS)
+  }
+
+  const restored = async (added: number) => {
+    const l = learned()
+    const items: string[] = []
+    if (l.budget !== null) items.push(`• budget ${aboutUsd(l.budget)} a month`)
+    if (l.goal) {
+      const g = l.goals[l.goal]
+      if (g) items.push(`• ${name(l.goal)} goal, ${aboutUsd(g.cents)}${g.by ? ` by ${monthName(g.by)}` : ''}`)
+    }
+    const caps = Object.keys(l.caps).length
+    if (caps) items.push(`• ${caps} cap${caps === 1 ? '' : 's'}`)
+    const rules = Object.entries(l.rules)
+    if (rules.length) items.push(`• ${rules.map(([k, c]) => `${k} → ${c ? CATEGORY_LABEL[c] : ''}`).join(', ')}`)
+    for (const [c, t] of Object.entries(l.thresholds) as Array<[Category, { cents: Cents }]>) items.push(`• i flag ${CATEGORY_LABEL[c]} from ${usd(t.cents)}`)
+    if (l.month?.month === monthKey(new Date())) items.push(`• ${aboutUsd(l.month.cents)} spent this month`)
+    await reply(`i remember you 🧠 pulled ${added} lines from ${memoryMode === 'walrus' ? 'Walrus Memory' : 'memory'}:\n${items.join('\n')}`)
+    push({ from: 'mira', kind: 'budget', view: budgetView() })
+    const view = l.goal ? goalView(l.goal) : null
+    if (view) push({ from: 'mira', kind: 'goal', view })
+    chips(BACK_CHIPS)
+  }
+
+  const refreshHealth = async () => {
+    try {
+      const h = await api.health()
+      memoryMode = h.memory.mode
+      cashMode = h.cash.mode
+      s.setHealth(h)
+      s.setModes({ memory: h.memory.mode, cash: h.cash.mode })
+    } catch {
+      s.setModes({ memory: null, cash: null })
+    }
+  }
+
+  const boot = async () => {
+    if (started) return
+    started = true
+    const handoff = /[?&]me=([a-z0-9]+)/.exec(location.hash)?.[1]
+    let adopted = false
+    if (handoff) {
+      history.replaceState(null, '', '#/chat')
+      if (isCode(handoff) && handoff !== s.dev.current.user) {
+        update(() => freshDevice(handoff))
+        adopted = true
+      }
+    }
+    await refreshHealth()
+    const d = s.dev.current
+    if (d.lines.length || d.spends.length) {
+      await welcomeBack()
+      void sync()
+        .then(() => refreshPockets())
+        .catch(() => undefined)
+      return
+    }
+    busy = true
+    s.setBusy(true)
+    const t = adopted ? trace('Remembering you', [['Recall', memoryMode === 'walrus' ? 'Walrus Memory, 4 namespaces' : 'memory preview'], ['Read your pockets', cashMode === 'sui' ? 'Sui testnet, through Tatum' : 'preview']]) : null
+    let added = 0
+    try {
+      t?.set(0, 'run')
+      if (!t) s.setTyping(true)
+      added = await sync()
+      t?.set(0, 'done', `${added} line${added === 1 ? '' : 's'}`)
+      t?.set(1, 'run')
+      if (added) await refreshPockets()
+      t?.set(1, 'done')
+    } catch {
+      t?.set(0, 'fail')
+    } finally {
+      s.setTyping(false)
+      busy = false
+      s.setBusy(false)
+    }
+    if (added) return restored(added)
+    await reply("hey, i'm Mira 💸 the money friend you text. tell me what you spend, ask me before you buy, and i'll learn what works for you")
+    push({ from: 'mira', kind: 'howto' })
+    await reply('start with a budget or a goal 👇 or type “help” any time')
+    chips(START_CHIPS)
+  }
+
+  /** Runs one turn. Afterwards the thread shows what Mira just learned, and there are always next steps. */
+  const run = async (fn: () => Promise<void>) => {
+    if (busy) return
+    busy = true
+    s.setBusy(true)
+    s.setChips([])
+    chipsSet = false
+    notes = []
+    try {
+      await fn()
+    } finally {
+      if (notes.length) push({ from: 'mira', kind: 'learned', texts: [...new Set(notes)] })
+      notes = []
+      if (!chipsSet) chips(suggestions())
+      busy = false
+      s.setBusy(false)
+    }
+  }
+
+  return {
+    boot,
+    flush,
+    refreshHealth,
+    sendText: (raw: string) => {
+      const text = raw.trim()
+      if (!text || busy) return
+      void run(async () => {
+        push({ from: 'me', kind: 'text', text })
+        pendingAsk = null
+        await handle(parseMessage(text, new Date()))
+      })
+    },
+    act: (a: Action) => {
+      if (a.type === 'handoff') {
+        s.setHandoff(true)
+        return
+      }
+      if (a.type === 'say') {
+        if (busy) return
+        void run(async () => {
+          push({ from: 'me', kind: 'text', text: a.text })
+          pendingAsk = null
+          await handle(parseMessage(a.text, new Date()))
+        })
+        return
+      }
+      const label = a.label
+      void run(() => (a.type === 'skip' ? skip(label) : buy(label)))
+    },
+    startOver: () => {
+      clearDevice()
+      location.hash = '#/chat'
+      location.reload()
+    },
+  }
 }
 
 export function useMira() {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [typing, setTyping] = useState(false)
-  const [busy, setBusy] = useState<Busy>('idle')
+  const [busy, setBusy] = useState(false)
   const [chips, setChips] = useState<Chip[]>([])
-  const [live, setLive] = useState<boolean | null>(null)
-  const [keySheet, setKeySheet] = useState(false)
-  const ctx = useRef({ selfie: null as string | null, body: null as string | null, report: null as SkinReport | null, pending: null as Pending, profile: loadProfile() })
-  const abortRef = useRef<AbortController | null>(null)
-  const started = useRef(false)
-
-  const push = useCallback((m: NewMsg) => {
-    const id = uid()
-    setMsgs((prev) => [...prev, { ...m, id } as Msg])
-    return id
-  }, [])
-
-  const patch = useCallback((id: string, fn: (m: Msg) => Msg) => setMsgs((prev) => prev.map((m) => (m.id === id ? fn(m) : m))), [])
-
-  // Mira "types" before every reply, proportional to message length, like a person would.
-  const say = useCallback(
-    async (text: string) => {
-      setTyping(true)
-      await sleep(Math.min(1400, 450 + text.length * 12))
-      setTyping(false)
-      push({ from: 'mira', kind: 'text', text })
-    },
-    [push],
-  )
-
-  const trace = useCallback(
-    (title: string, labels: [string, string?][]) => {
-      const id = push({ from: 'mira', kind: 'trace', title, steps: labels.map(([label, detail]) => ({ label, detail, state: 'todo' as const })) })
-      const set = (i: number, state: Step['state'], detail?: string) =>
-        patch(id, (m) => (m.kind === 'trace' ? { ...m, steps: m.steps.map((s, j) => (j === i ? { ...s, state, detail: detail ?? s.detail } : s)) } : m))
-      return { set }
-    },
-    [push, patch],
-  )
-
-  const remember = (fn: (p: Profile) => void) => {
-    fn(ctx.current.profile)
-    ctx.current.profile = { ...ctx.current.profile }
-    saveProfile(ctx.current.profile)
-  }
+  const [device, setDevice] = useState<Device>(loadDevice)
+  const [modes, setModes] = useState<Modes>({ memory: null, cash: null })
+  const [health, setHealth] = useState<Health | null>(null)
+  const [handoff, setHandoff] = useState(false)
+  const dev = useRef(device)
+  const agentRef = useRef<ReturnType<typeof createAgent> | null>(null)
+  agentRef.current ??= createAgent({ setMsgs, setTyping, setBusy, setChips, setDevice, setModes, setHealth, setHandoff, dev })
+  const agent = agentRef.current
 
   useEffect(() => {
-    if (started.current) return
-    started.current = true
-    api.health().then((h) => setLive(h.live)).catch(() => setLive(false))
-    ;(async () => {
-      const p = ctx.current.profile
-      await say(p.scans ? `welcome back ✨ last time your skin scored ${p.lastScore}. want to check in?` : "hey! i'm Mira 💅 your shopping bestie for skin, makeup and fits")
-      await say('send me a selfie and i will read your skin with YouCam AI, find what actually works, check every store for the best price, and try it on you before you buy')
-      setChips(START_CHIPS)
-    })()
-  }, [say])
+    void agent.boot()
+    const timer = setInterval(() => void agent.flush(), 3000)
+    return () => clearInterval(timer)
+  }, [agent])
 
-  // ---------- tools ----------
+  const learned = useMemo(() => learn(device.lines.map((l) => l.fact)), [device.lines])
+  const overview = useMemo((): Overview => {
+    const spent = monthSpent(device.spends, new Date(), learned.month)
+    const g = learned.goal
+    const target = g ? learned.goals[g]?.cents : undefined
+    return {
+      budget: learned.budget,
+      spent,
+      left: learned.budget === null ? null : learned.budget - spent,
+      goal: g && target ? { name: goalName(g, device.labels), emoji: GOAL_EMOJI[g], target, saved: device.pockets[goalPocket(g)] ?? 0 } : null,
+    }
+  }, [device, learned])
+  const hint = learned.budget === null ? 'Try “budget 400 a month”' : 'Text a spend, or ask before you buy'
 
-  const runSkin = useCallback(
-    async (photo: string) => {
-      setBusy('working')
-      setChips([])
-      const ac = new AbortController()
-      abortRef.current = ac
-      const t = trace('Mira is on it', [
-        ['Reading your selfie'],
-        ['YouCam Skin AI', '8 concerns'],
-        ['Matching products to your skin'],
-        ['Checking 3 stores for the best price'],
-        ['Trying your best lip shade on you', 'YouCam Makeup VTO'],
-      ])
-      try {
-        t.set(0, 'run')
-        let img = await prepareImage(photo, { minShort: 640, maxLong: 1600 })
-        t.set(0, 'done')
-        t.set(1, 'run')
-        let report: SkinReport
-        try {
-          report = await api.skin(img, ac.signal)
-        } catch (err) {
-          // Self-heal once: a selfie taken at arm's length is the most common rejection.
-          if (!(err instanceof ApiError) || !err.code.includes('too_small')) throw err
-          t.set(1, 'run', 'face too far, zooming in and retrying')
-          img = await zoomToFace(img)
-          report = await api.skin(img, ac.signal)
-        }
-        ctx.current.selfie = img
-        ctx.current.report = report
-        t.set(1, 'done', `${report.concerns.length} concerns scored`)
-        t.set(2, 'run')
-        const sorted = [...report.concerns].sort((a, b) => a.score - b.score)
-        const focus = sorted.slice(0, 3)
-        const picks = focus.map((c) => SKIN_PRODUCTS.find((p) => p.concern === c.type)).filter(Boolean) as SkinProduct[]
-        await sleep(500)
-        t.set(2, 'done', picks.map((p) => p.brand).join(', '))
-        t.set(3, 'run')
-        await sleep(600)
-        const totalSaved = picks.reduce((s, p) => s + saved(p.offers), 0)
-        t.set(3, 'done', `saves you $${totalSaved}`)
-
-        push({ from: 'mira', kind: 'skin', report, photo: img })
-        const oily = report.concerns.find((c) => c.type === 'oiliness')
-        const dry = report.concerns.find((c) => c.type === 'moisture')
-        const skinType = oily && dry ? (oily.score < 68 && dry.score < 68 ? 'combination' : oily.score < 68 ? 'oily' : dry.score < 68 ? 'dry' : 'balanced') : 'balanced'
-        remember((p) => {
-          p.skinType = skinType
-          p.focus = focus.map((c) => c.type)
-          p.skinAge = report.skinAge ?? p.skinAge
-          p.lastScore = report.overall ?? p.lastScore
-          p.scans += 1
-          p.saved += totalSaved
-          p.history = [...p.history, { date: new Date().toISOString().slice(0, 10), score: report.overall ?? 0 }].slice(-8)
-        })
-        await say(
-          `your skin scores ${report.overall}/100${report.skinAge ? ` and reads like ${report.skinAge}` : ''} 🫶 biggest wins are ${focus
-            .map((c) => CONCERN_LABEL[c.type]?.toLowerCase() || c.type)
-            .join(', ')}. you look ${skinType}, so i skipped anything heavy or fragranced`,
-        )
-        push({ from: 'mira', kind: 'picks', items: picks })
-
-        // Agentic follow through: pick a shade from what we just learned and try it on unprompted.
-        t.set(4, 'run')
-        const redness = report.concerns.find((c) => c.type === 'redness')?.score ?? 80
-        const shade = redness < 70 ? LIP_SHADES[0] : report.skinAge && report.skinAge > 30 ? LIP_SHADES[3] : LIP_SHADES[1]
-        const out = await makeup(img, shade, ac.signal)
-        t.set(4, 'done', shade.name)
-        remember((p) => (p.lipShade = shade.name))
-        await say(
-          redness < 70
-            ? `bonus: a ${shade.name.toLowerCase()} balances visible redness instead of fighting it. already tried it on you 👇`
-            : `bonus: i tried ${shade.name} on you since it pops with your tone 👇`,
-        )
-        push({ from: 'mira', kind: 'tryon', before: img, after: out.url, title: shade.name, sub: `${shade.brand} · $${best(shade.offers).price} at ${best(shade.offers).store}`, mock: out.mock })
-        setChips([
-          { label: '💄 Other shades', action: { type: 'shades' } },
-          { label: '🧥 Try a full look', action: { type: 'outfit' } },
-          { label: '🧠 What you know about me', action: { type: 'memory' } },
-        ])
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') return
-        const idx = [0, 1, 2, 3, 4]
-        idx.forEach((i) => t.set(i, 'fail'))
-        await say(err instanceof ApiError ? err.message : 'something broke on my side, try again?')
-        setChips(needsKey(err) ? KEY_CHIPS : [{ label: '📸 Try another selfie', action: { type: 'scan' } }, ...(ctx.current.selfie ? [] : [{ label: '✨ Use demo selfie', action: { type: 'demoSelfie' } as Action }])])
-      } finally {
-        setBusy('idle')
-        abortRef.current = null
-      }
-    },
-    [push, say, trace],
-  )
-
-  const tryShade = useCallback(
-    async (shade: LipShade) => {
-      if (!ctx.current.selfie) {
-        ctx.current.pending = 'selfie'
-        await say(`love ${shade.name} 💋 send me a selfie and i'll put it on you`)
-        setChips([{ label: '✨ Use demo selfie', action: { type: 'demoSelfie' } }])
-        return
-      }
-      setBusy('working')
-      const t = trace(`Trying ${shade.name}`, [['YouCam Makeup VTO', `${shade.texture} · ${shade.color}`], ['Price check', '3 stores']])
-      try {
-        t.set(0, 'run')
-        const out = await makeup(ctx.current.selfie, shade)
-        t.set(0, 'done')
-        t.set(1, 'done', `best $${best(shade.offers).price} at ${best(shade.offers).store}`)
-        remember((p) => (p.lipShade = shade.name))
-        push({ from: 'mira', kind: 'tryon', before: ctx.current.selfie, after: out.url, title: shade.name, sub: `${shade.brand} · $${best(shade.offers).price} at ${best(shade.offers).store}`, mock: out.mock })
-        await say(`${shade.vibe}. saved you $${saved(shade.offers)} vs the priciest store`)
-      } catch (err) {
-        t.set(0, 'fail')
-        await say(err instanceof ApiError ? err.message : 'that one failed, try again?')
-        if (needsKey(err)) setChips(KEY_CHIPS)
-      } finally {
-        setBusy('idle')
-      }
-    },
-    [push, say, trace],
-  )
-
-  const tryGarment = useCallback(
-    async (g: Garment) => {
-      if (!ctx.current.body) {
-        ctx.current.pending = 'body'
-        await say('send me a full body pic (head to toe, standing) and i will dress you in it 🧥')
-        setChips([{ label: '✨ Use demo full body photo', action: { type: 'demoBody' } }])
-        return
-      }
-      setBusy('working')
-      setChips([])
-      const t = trace(`Dressing you in ${g.name}`, [['Preparing your photo'], ['YouCam AI Clothes', g.category.replace('_', ' ')], ['Price check', '3 stores']])
-      try {
-        t.set(0, 'run')
-        const garment = await prepareImage(g.image, { minShort: 512, maxLong: 1600 })
-        t.set(0, 'done')
-        t.set(1, 'run')
-        const res = await api.cloth(ctx.current.body, garment, g.category)
-        // Demo mode has no generated image, so preview the garment reference instead.
-        const out = res.mock ? { ...res, url: g.image } : res
-        t.set(1, 'done')
-        t.set(2, 'done', `best $${best(g.offers).price} at ${best(g.offers).store}`)
-        push({ from: 'mira', kind: 'tryon', before: ctx.current.body, after: out.url, title: g.name, sub: `${g.brand} · $${best(g.offers).price} at ${best(g.offers).store}`, mock: out.mock })
-        const lip = ctx.current.profile.lipShade
-        await say(`ok this is a serve 🔥 ${lip ? `pair it with ${lip} for the full look. ` : ''}it's $${saved(g.offers)} cheaper at ${best(g.offers).store}`)
-        setChips([
-          { label: '📸 Rescan my skin', action: { type: 'scan' } },
-          { label: '💄 Lip shades', action: { type: 'shades' } },
-          { label: '🧠 What you know about me', action: { type: 'memory' } },
-        ])
-      } catch (err) {
-        t.set(1, 'fail')
-        await say(err instanceof ApiError ? err.message : 'that try on failed, try again?')
-        if (needsKey(err)) setChips(KEY_CHIPS)
-      } finally {
-        setBusy('idle')
-      }
-    },
-    [push, say, trace],
-  )
-
-  // ---------- inputs ----------
-
-  const sendPhoto = useCallback(
-    async (src: string) => {
-      if (busy !== 'idle') return
-      push({ from: 'me', kind: 'image', src })
-      const pending = ctx.current.pending
-      ctx.current.pending = null
-      if (pending === 'body') {
-        ctx.current.body = await prepareImage(src, { minShort: 512, maxLong: 1600 })
-        await tryGarment(GARMENTS[0])
-        return
-      }
-      await runSkin(src)
-    },
-    [busy, push, runSkin, tryGarment],
-  )
-
-  const showShades = useCallback(async () => {
-    await say(ctx.current.report ? 'picked these for your tone, tap one to try it on 💄' : 'here are this week\'s best lip picks, tap one to try it on 💄')
-    push({ from: 'mira', kind: 'shades', items: LIP_SHADES })
-  }, [push, say])
-
-  const showOutfits = useCallback(async () => {
-    await say('this look is trending and 24% off at one store right now, want to see it on you?')
-    push({ from: 'mira', kind: 'garments', items: GARMENTS })
-  }, [push, say])
-
-  const showMemory = useCallback(async () => {
-    const p = ctx.current.profile
-    await say(p.scans ? "here's what i've learned about you so far, i use it on every pick 🧠" : "not much yet! scan your skin once and i'll remember what works for you")
-    if (p.scans) push({ from: 'mira', kind: 'memory', profile: p })
-  }, [push, say])
-
-  const act = useCallback(
-    async (a: Action) => {
-      if (busy !== 'idle') return
-      setChips([])
-      if (a.type === 'scan') {
-        ctx.current.pending = 'selfie'
-        await say('send me a selfie 📸 face the window, no filter, hair off your face')
-        setChips([{ label: '✨ Use demo selfie', action: { type: 'demoSelfie' } }])
-      } else if (a.type === 'shades') await showShades()
-      else if (a.type === 'outfit') await showOutfits()
-      else if (a.type === 'memory') await showMemory()
-      else if (a.type === 'demoSelfie') await sendPhoto(DEMO_SELFIE)
-      else if (a.type === 'demoBody') {
-        ctx.current.pending = 'body'
-        await sendPhoto(DEMO_BODY)
-      } else if (a.type === 'addKey') setKeySheet(true)
-      else if (a.type === 'demoMode') {
-        settings.setDemo(true)
-        setLive(false)
-        await say('demo mode on ✨ results are previews until you add a YouCam key. try it out 👇')
-        setChips(START_CHIPS)
-      } else if (a.type === 'say') await sendText(a.text)
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [busy, say, showShades, showOutfits, showMemory, sendPhoto],
-  )
-
-  const sendText = useCallback(
-    async (raw: string) => {
-      const text = raw.trim()
-      if (!text || busy !== 'idle') return
-      push({ from: 'me', kind: 'text', text })
-      setChips([])
-      const t = text.toLowerCase()
-      if (/(skin|acne|pimple|breakout|pore|scan|wrinkle|oily|dry|redness|selfie)/.test(t)) return act({ type: 'scan' })
-      if (/(lip|lipstick|gloss|shade|makeup|red|nude|berry)/.test(t)) return showShades()
-      if (/(outfit|dress|jacket|wear|fit|look|clothes|try on)/.test(t)) return showOutfits()
-      if (/(know|remember|profile|about me|memory)/.test(t)) return showMemory()
-      if (/(cheap|price|deal|save|cost|\$)/.test(t)) {
-        const p = ctx.current.profile
-        await say(p.saved ? `so far i've saved you $${p.saved} by checking every store 💸 i always show the cheapest legit seller first` : 'i check 3 stores on every pick and only show verified sellers. scan your skin and i\'ll start saving you money 💸')
-        return
-      }
-      if (/(hi|hey|hello|yo|sup)\b/.test(t)) {
-        await say('hiii 👋 what are we shopping for today?')
-        setChips(START_CHIPS)
-        return
-      }
-      if (/(thank|ty|love)/.test(t)) {
-        await say('anytime 🫶 i\'ll ping you if any of your picks drop in price')
-        return
-      }
-      await say("i'm best at skin, makeup and outfits right now. send a selfie or pick one of these 👇")
-      setChips(START_CHIPS)
-    },
-    [busy, push, say, act, showShades, showOutfits, showMemory],
-  )
-
-  const cancel = useCallback(() => abortRef.current?.abort(), [])
-
-  // Called by the key sheet after the user saves or clears their own YouCam key.
-  const keySaved = useCallback(
-    async (hasOwn: boolean) => {
-      setKeySheet(false)
-      if (hasOwn) settings.setDemo(false)
-      const h = await api.health().catch(() => ({ live: false }))
-      setLive(h.live)
-      await say(hasOwn ? "got your YouCam key 🔑 i'll run everything live on your units now" : 'key removed, back to the shared units')
-      setChips(START_CHIPS)
-    },
-    [say],
-  )
-
-  return { msgs, typing, busy, chips, live, keySheet, setKeySheet, keySaved, sendText, sendPhoto, act, tryShade, tryGarment, cancel }
+  return {
+    msgs,
+    typing,
+    busy,
+    chips,
+    device,
+    learned,
+    overview,
+    hint,
+    modes,
+    health,
+    handoff,
+    setHandoff,
+    send: agent.sendText,
+    act: agent.act,
+    refreshHealth: agent.refreshHealth,
+    startOver: agent.startOver,
+  }
 }

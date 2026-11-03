@@ -1,18 +1,19 @@
 import { MemWal } from "@mysten-incubation/memwal";
 
 /**
- * Hunch's namespaces (docs/hunch-prd.md §10), kept as the model until docs/prd.md names this product's.
- * One typed line per memory; the database does the math, memory holds the conclusions the product acts on.
+ * Mira's namespaces, one set per user code (PRD §8.1, ADR-0003). Each holds one kind of typed line built by
+ * `factLine` in `@mira/money`; namespace strings are built here and nowhere else. The `mira:` prefix keeps
+ * them apart from another app's on the shared account (ADR-0007).
  */
 export const NAMESPACE = {
-  /** RULE and PROVEN lines: what a user believes, how the rule changed, which hunches held up. */
-  rules: (user: string) => `rules:${user}`,
-  /** PICK lines: what a user's rules said, with each pick's anchor. */
-  picks: (user: string) => `picks:${user}`,
-  /** TRUST lines: each voice's record per context. The agent's weights, recalled newest first. */
-  trust: "trust:public",
-  /** SPLIT lines: which side won when the sources disagreed. */
-  radar: "radar:public",
+  /** BUDGET, CAP, GOAL and MONTH lines: what the user set, rounded. */
+  prefs: (user: string) => `mira:prefs:${user}`,
+  /** RULE lines: a keyword's category, from the user's corrections. */
+  rules: (user: string) => `mira:rules:${user}`,
+  /** NUDGE lines: how each "should I buy" answer went. The thresholds are derived from them. */
+  nudges: (user: string) => `mira:nudges:${user}`,
+  /** HABIT lines: a category's weekly spend and peak days, rounded. */
+  habits: (user: string) => `mira:habits:${user}`,
 } as const;
 
 /** Everything needed to talk to one (account, namespace) through the relayer. */

@@ -1,5 +1,5 @@
 /**
- * @mira/memory: Walrus Memory on mainnet (Hunch ADR-0005), carried over from Hunch. The namespaces, a
+ * @mira/memory: Walrus Memory on mainnet (ADR-0001). The namespaces, a
  * client per namespace, the relayer's rate limit, account and delegate reads over gRPC, sponsored
  * account transactions, wallet sign-in, and the redaction that runs before anything is written.
  */

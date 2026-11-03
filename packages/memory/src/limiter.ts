@@ -1,6 +1,6 @@
 /**
  * The relayer rate-limits the write path per delegate key. Observed on mainnet
- * 2026-09-21: `60 weighted-requests/min` (the public docs say 30). Hunch writes
+ * 2026-09-21: `60 weighted-requests/min` (the public docs say 30). Mira writes
  * every user's lines with one delegate key, so requests must be paced in
  * process or a burst returns 429 for everyone.
  */
@@ -16,7 +16,7 @@ export interface LimiterOptions {
    * is capped at three concurrent decrypts, and under concurrent recalls it
    * starts answering with an empty result plus a non-zero `dropped_count`
    * instead of queueing. Fewer requests in flight means fewer dropped recalls,
-   * which matters more than latency here. See docs/SPIKES.md §H.
+   * which matters more than latency here (tech reference §1.11).
    */
   concurrency?: number;
 }

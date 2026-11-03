@@ -1,8 +1,25 @@
-export type SkinReport = {
-  mock: boolean
-  concerns: { type: string; score: number; mask: string | null }[]
-  skinAge: number | null
-  overall: number | null
+import type { Cents, Fact, MemoryKind, Pocket } from '@mira/money'
+
+export type MemoryMode = 'walrus' | 'preview'
+export type CashMode = 'sui' | 'preview'
+export type JobStatus = 'queued' | 'writing' | 'done' | 'failed'
+export type Receipt = { digest: string; url: string | null }
+
+export type RecalledLine = {
+  key: string
+  kind: MemoryKind
+  line: string
+  fact: Fact
+  status: 'stored' | JobStatus
+  blobId: string | null
+  createdAt: string | null
+}
+
+export type Health = {
+  ok: boolean
+  memory: { mode: MemoryMode; lines: Record<JobStatus, number> }
+  cash: { mode: CashMode }
+  tatum: { calls: Record<string, number>; lastHour: number; fallback: { since: number; reason: string } | null } | null
 }
 
 export class ApiError extends Error {
@@ -13,116 +30,33 @@ export class ApiError extends Error {
   }
 }
 
-// The user's own YouCam key and demo choice live only in this browser; the key is sent
-// per request so the server can call YouCam on the user's units, and is never stored there.
-const KEY_STORE = 'mira.youcamKey'
-const DEMO_STORE = 'mira.demo'
-const read = (k: string) => {
-  try {
-    return localStorage.getItem(k) || ''
-  } catch {
-    return ''
-  }
-}
-const write = (k: string, v: string) => {
-  try {
-    if (v) localStorage.setItem(k, v)
-    else localStorage.removeItem(k)
-  } catch {
-    // storage blocked; the setting lasts for this page only
-  }
-}
-export const settings = {
-  key: () => read(KEY_STORE),
-  setKey: (v: string) => write(KEY_STORE, v.trim()),
-  demo: () => read(DEMO_STORE) === '1',
-  setDemo: (on: boolean) => write(DEMO_STORE, on ? '1' : ''),
-}
-
-async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+async function call<T>(path: string, init?: { method: 'POST'; body: unknown }): Promise<T> {
   let res: Response
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (settings.demo()) headers['X-Mira-Demo'] = '1'
-  else if (settings.key()) headers['X-YouCam-Key'] = settings.key()
   try {
-    res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body), signal })
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') throw err
+    res = await fetch(path, init ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(init.body) } : undefined)
+  } catch {
     throw new ApiError('offline', "I can't reach the server right now. Check your connection and try again.")
   }
-  const json = await res.json().catch(() => ({}))
-  if (!res.ok) throw new ApiError(json.error || 'failed', friendly(json.error, json.message))
+  const json: unknown = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const body = (typeof json === 'object' && json !== null ? json : {}) as { error?: string; message?: string }
+    throw new ApiError(body.error ?? 'failed', body.message ?? 'Something went wrong on my side. Try again?')
+  }
   return json as T
 }
 
-function friendly(code?: string, message?: string) {
-  const c = (code || '').toLowerCase()
-  if (c.includes('face') && c.includes('small')) return 'Your face looks a bit far away. Try a closer selfie, face filling most of the frame.'
-  if (c.includes('face')) return "I couldn't find a clear, front facing face. Try again looking straight at the camera."
-  if (c.includes('lighting')) return 'It is a little dark. Try again near a window.'
-  if (c.includes('size')) return 'That photo is too small. Send one at least 600px wide.'
-  if (c.includes('pose')) return 'For outfits I need a full body photo, standing, arms relaxed.'
-  if (c.includes('credit') || c.includes('unit')) return 'My shared YouCam units ran out. Add your own free YouCam key (new accounts get free units) or try demo mode 👇'
-  if (c.includes('auth') || c === 'http_401' || c === 'http_403') return 'That YouCam key did not work. Double check it in your YouCam console and paste it again.'
-  if (c === 'timeout') return 'YouCam is taking longer than usual. Try once more?'
-  return message || 'Something went wrong on my side. Try again?'
-}
+const q = (params: Record<string, string>) => new URLSearchParams(params).toString()
 
 export const api = {
-  // Live when demo is off and either the server or the user has a key.
-  health: () =>
-    fetch('/api/health')
-      .then((r) => r.json() as Promise<{ ok: boolean; live: boolean }>)
-      .then((h) => ({ ...h, live: !settings.demo() && (h.live || Boolean(settings.key())), own: Boolean(settings.key()) })),
-  skin: (image: string, signal?: AbortSignal) => post<SkinReport>('/api/skin', { image }, signal),
-  makeup: (image: string, effect: unknown, signal?: AbortSignal) => post<{ mock: boolean; url: string }>('/api/makeup', { image, effect }, signal),
-  cloth: (image: string, garment: string, category: string, signal?: AbortSignal) =>
-    post<{ mock: boolean; url: string }>('/api/cloth', { image, garment, category }, signal),
-}
-
-// Loads any image source and re-encodes it as JPEG within YouCam's size window.
-export async function prepareImage(src: string | Blob, opts: { minShort?: number; maxLong?: number } = {}) {
-  const { minShort = 600, maxLong = 1800 } = opts
-  const url = typeof src === 'string' ? src : URL.createObjectURL(src)
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const i = new Image()
-    i.crossOrigin = 'anonymous'
-    i.onload = () => resolve(i)
-    i.onerror = () => reject(new ApiError('bad_image', "I couldn't open that image. Try a JPG or PNG."))
-    i.src = url
-  })
-  const w = img.naturalWidth
-  const h = img.naturalHeight
-  let scale = Math.min(1, maxLong / Math.max(w, h))
-  if (Math.min(w, h) * scale < minShort) scale = Math.min(minShort / Math.min(w, h), maxLong / Math.max(w, h))
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(w * scale)
-  canvas.height = Math.round(h * scale)
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#fff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-  if (typeof src !== 'string') URL.revokeObjectURL(url)
-  return canvas.toDataURL('image/jpeg', 0.9)
-}
-
-// Crops toward the face (center, upper part) so it fills more of the frame; YouCam Skin AI
-// needs the face to cover over 60% of the image width.
-export async function zoomToFace(src: string) {
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const i = new Image()
-    i.onload = () => resolve(i)
-    i.onerror = reject
-    i.src = src
-  })
-  const w = img.naturalWidth * 0.5
-  const h = Math.min(img.naturalHeight, w * 1.2)
-  const x = (img.naturalWidth - w) / 2
-  const y = Math.max(0, img.naturalHeight * 0.38 - h / 2)
-  const canvas = document.createElement('canvas')
-  const scale = Math.max(1, 640 / w)
-  canvas.width = Math.round(w * scale)
-  canvas.height = Math.round(h * scale)
-  canvas.getContext('2d')!.drawImage(img, x, y, w, h, 0, 0, canvas.width, canvas.height)
-  return canvas.toDataURL('image/jpeg', 0.92)
+  health: () => call<Health>('/api/health'),
+  recall: (user: string) => call<{ mode: MemoryMode; lines: RecalledLine[] }>(`/api/memory?${q({ user })}`),
+  remember: (user: string, facts: Fact[]) =>
+    call<{ jobs: Array<{ key: string; line: string; kind: MemoryKind; status: JobStatus; blobId: string | null }> }>('/api/memory', { method: 'POST', body: { user, facts } }),
+  jobs: (user: string, keys: string[]) =>
+    call<{ jobs: Array<{ key: string; status: JobStatus | 'unknown'; blobId: string | null }> }>(`/api/memory/jobs?${q({ user, keys: keys.join(',') })}`),
+  pockets: (user: string, pockets: Pocket[]) => call<{ mode: CashMode; balances: Partial<Record<Pocket, Cents>> }>(`/api/cash?${q({ user, pockets: pockets.join(',') })}`),
+  open: (user: string) =>
+    call<{ mode: CashMode; seeded: boolean; receipt: Receipt | null; balances: Partial<Record<Pocket, Cents>> }>('/api/cash/open', { method: 'POST', body: { user } }),
+  move: (user: string, from: Pocket, to: Pocket, cents: Cents) =>
+    call<{ mode: CashMode; receipt: Receipt; balances: Partial<Record<Pocket, Cents>> }>('/api/cash/move', { method: 'POST', body: { user, from, to, cents } }),
 }

@@ -18,7 +18,7 @@ export function isRateLimited(err: unknown): boolean {
 }
 
 const usage = new Map<string, number>();
-/** Requests per minute for the last hour, so health can show the current rate (Hunch ADR-0003). */
+/** Requests per minute for the last hour, so health can show the current rate (ADR-0001). */
 const perMinute = new Map<number, number>();
 const count = (key: string) => {
   usage.set(key, (usage.get(key) ?? 0) + 1);
@@ -37,7 +37,7 @@ export function tatumCallsLastHour(now = Date.now()): number {
 
 /**
  * What this process has asked Tatum for since it started: unary requests (retries included) and
- * stream frames, per method. A stream's frames are what spent a month's credits (Hunch ADR-0003).
+ * stream frames, per method. A stream's frames are what spent a month's credits (ADR-0001).
  */
 export function tatumUsage(): Record<string, number> {
   return Object.fromEntries([...usage].sort(([a], [b]) => a.localeCompare(b)));
@@ -95,7 +95,7 @@ export function unaryCall<I extends object, O extends object>(
 export interface PacingOptions {
   /** Unary calls started per second, across the whole client. */
   maxRps: number;
-  /** Counts toward `tatumUsage` (the default). The public fallback isn't Tatum (Hunch ADR-0004). */
+  /** Counts toward `tatumUsage` (the default). The public fallback isn't Tatum (ADR-0001). */
   metered?: boolean;
   /** Retries after a 429. The gateway rejected the call, so even ExecuteTransaction is safe to resend. */
   rateLimitRetries?: number;

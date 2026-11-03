@@ -27,7 +27,7 @@ const PATTERNS: Record<string, RegExp> = {
 };
 // Local databases and placeholders are fine in history.
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "postgres", "db", "host", "HOST"]);
-const PLACEHOLDERS = new Set(["postgres", "password", "pass", "hunch", "test", "secret"]);
+const PLACEHOLDERS = new Set(["postgres", "password", "pass", "mira", "test", "secret"]);
 
 const git = (...args: string[]) =>
   spawnSync("git", ["-C", ROOT, ...args], { encoding: "utf8", maxBuffer: 1 << 30 }).stdout;

@@ -1,7 +1,6 @@
 # Walrus x Tatum: Total Recall — Event Rules
 
-> **Carried over from [Hunch](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/event-rules.md) on 2026-11-03. This repo is Track 3 (§6).** Read
-> §3 before submitting: one submission per person.
+> **This repo is Track 3 (§6).** Read §3 before submitting: one submission per person.
 
 > Source: the Walrus Sessions "Event Rules" page, plus details from the official event page
 > ([tatum.io/hackathon/total-recall](https://tatum.io/hackathon/total-recall)) and the submission site

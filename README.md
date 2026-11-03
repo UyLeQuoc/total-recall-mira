@@ -1,93 +1,96 @@
-# Mira: your AI beauty and style assistant in iMessage
+# Mira: the money friend you text
 
-> **This fork is becoming a Track 3 entry (Consumer Finance Apps) to the Walrus × Tatum "Total Recall"
-> hackathon.** Start at [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md). What follows describes
-> Mira as built for the YouCam hackathon.
+> A **Track 3 (Consumer Finance Apps)** entry to the Walrus × Tatum "Total Recall" hackathon. Start at
+> [docs/prd.md](docs/prd.md); decisions are in [docs/adr/](docs/adr/README.md).
 
-Mira is a shopping assistant you text like a friend. Send one selfie and Mira reads your skin with **YouCam AI Skin Analysis**, matches products to your three weakest scores, checks three stores for the best price, and then tries the best lip shade on your own face with **YouCam Makeup VTO** before you ask. Ask for a full look and Mira dresses your full body photo with **YouCam AI Clothes**. Everything happens inside an iMessage style thread that runs on iPhone Safari (add it to the home screen for a full screen app) and on desktop inside a phone frame.
+**Live:** https://mira-flax.vercel.app (chat at `/#/chat`). The web app is on Vercel and the API on
+Railway ([ADR-0008](docs/adr/0008-web-on-vercel-api-on-railway.md)). Memory on Walrus mainnet, test money on
+Sui testnet.
 
-**Live:** https://mira-production-110e.up.railway.app (chat at `/#/chat`)
+You text Mira what you spend, the way you'd text a friend: "coffee 5.5", "uber 18", "dinner 84 split 3
+ways". She keeps your budget, your caps and your savings goal. Ask "should I buy the $48 serum?" and she
+checks three stores, your caps, your goal's pace and **what she learned from your last answers**, then
+offers "skip it, move $41 to Tokyo". One tap moves the money between your pockets. It feels like texting;
+the blockchain stays out of sight.
 
-Built for the YouCam API Skin AI and eCommerce VTO Hackathon (both tracks: Skin AI and eCommerce VTO, working as one flow).
+## How Mira learns, and where it lives
 
-## Why it matters
+| You do                                  | Mira writes to Walrus Memory (mainnet)          | What changes next time                                 |
+| --------------------------------------- | ----------------------------------------------- | ------------------------------------------------------ |
+| "budget 400 a month"                    | `BUDGET · monthly · about $400`                 | "left" on every receipt, the verdict on every ask      |
+| "saving 1200 for tokyo by march"        | `GOAL · trip · about $1,200 · by 2027-03`       | where skip-and-save money goes; the greeting          |
+| "cap eating out at 60 a week"           | `CAP · eating out · about $60 a week`           | cap meters, "skip it" when a buy would break it        |
+| "coffee counts as eating out"           | `RULE · coffee → eating out`                    | the next coffee is filed there, "from memory"          |
+| skip a $41 serum                        | `NUDGE · beauty · about $40 · skipped`          | beauty is flagged from $30, and Mira says why          |
+| buy past a nudge twice                  | `NUDGE · shopping · … · bought anyway`          | the threshold rises; Mira nags less                    |
+| spend through the month                 | `MONTH · 2026-11 · spent about $250`            | a new device knows where the month stands              |
 
-People wonder about their skin right before a purchase, not in the abstract. Today that moment means a quiz, a guess, a serum that breaks you out, a lipstick that looked better on the model, and paying full price at the first store. Mira turns that moment into one text message: a measured skin read, products chosen for the measured problem, the shade already on your face, and the cheapest verified seller.
-
-## What the agent does on one selfie
-
-| Step | Tool | What the user sees |
-| :--- | :--- | :--- |
-| 1 | Client resize to YouCam limits | "Reading your selfie" |
-| 2 | YouCam Skin Analysis (`/s2s/v2.0/task/skin-analysis`, 8 SD concerns, JSON output with masks) | Skin score ring, skin age, 8 concern bars, concern heat maps |
-| 3 | Product matcher (lowest three scores mapped to actives) | Archi style product cards with review pills and sources |
-| 4 | Price check across three stores | "better price found" tags and total saved |
-| 5 | YouCam Makeup VTO (`/s2s/v2.0/task/makeup-vto`, `lip_color` effect chosen from the redness score) | Before and after slider of the shade on your face |
-| 6 | Memory update (localStorage) | "Mira remembers" card: skin type, focus, shade, score history |
-
-The step trace is streamed into the thread so the user can watch the agent work, and every step can fail independently with a friendly, specific message (face too small, too dark, not front facing, timeout, offline). A Stop button aborts an in flight scan.
-
-Outfits follow the same pattern with YouCam AI Clothes (`/s2s/v2.0/task/cloth-v4`, with an automatic fallback to the v2 `cloth` endpoint).
+- **The device keeps the numbers; memory keeps the lessons.** Exact spends, labels ("tokyo") and friends'
+  names never leave the phone. The server builds every memory line from a typed fact, rounded
+  ([ADR-0003](docs/adr/0003-ledger-on-device-typed-lines-in-memory.md)).
+- **Memory follows you.** "Continue on my phone" shows a QR with your Mira code. The phone has an empty
+  ledger, recalls your four namespaces from Walrus Memory and picks up where you left off.
+- **Money moves on Sui testnet, through Tatum.** Spending and goal pockets are testnet addresses whose keys
+  the server derives from a secret; the operator sponsors gas, so a $41 move moves exactly $41. Every
+  balance read and move is a Tatum gRPC call, counted on the "Under the hood" panel
+  ([ADR-0004](docs/adr/0004-mira-cash-pockets-on-sui-testnet.md)).
 
 ## Run it
 
-```bash
-cp .env.example .env
-```
-
-Put your key from the YouCam API console into `.env` as `YOUCAM_API_KEY=...`. Without a key the server runs in demo mode with deterministic mock scores so the UI can still be explored.
+Needs Node ≥ 22.18 (the server and packages are TypeScript that Node runs as is).
 
 ```bash
-npm --prefix web install
+npm install && npm --prefix web install
+npm run build:web
+npm start
 ```
 
-```bash
-npm run build && npm start
-```
+Open http://localhost:8787 (landing) and http://localhost:8787/#/chat. Without keys the server runs in
+**preview mode**: memory on the SDK's in-process mock, pockets on a simulated ledger, and the header says
+"preview" ([ADR-0006](docs/adr/0006-typescript-server-and-preview-mode.md)). For live mode, copy
+`.env.example` to `.env` and fill in the Walrus Memory account and delegate key, the Tatum testnet key,
+an operator testnet key (`npm run cash:faucet` tops it up) and a wallet secret.
 
-Open http://localhost:8787 for the landing page and http://localhost:8787/#/chat for the iMessage thread. For development run `node server/index.mjs` and `npm --prefix web run dev`, then open http://localhost:5173 (Vite proxies `/api` to the server).
+For development: `npm run dev` (server with `--watch` plus Vite on http://localhost:5173, proxying `/api`).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  U[iPhone Safari, iMessage style thread] -->|selfie or full body photo, data URL| S[Node server, server/index.mjs]
-  S -->|POST /s2s/v2.0/file, PUT presigned URL| Y[(YouCam API v2)]
-  S -->|task: skin-analysis, makeup-vto, cloth-v4| Y
-  S -->|poll task until success| Y
-  S -->|scores, masks, result image URL| U
-  U -->|profile and score history| L[(localStorage memory)]
+  P[Thread on phone or desktop] -->|typed facts + Mira code| S[Node server]
+  P -->|ledger, labels, names| D[(Device storage)]
+  S -->|rememberBulk, recall| W[(Walrus Memory, mainnet)]
+  S -->|GetBalance, ExecuteTransaction| T[Tatum Sui gRPC, testnet]
 ```
 
-The YouCam key never reaches the browser. `server/youcam.mjs` implements the documented v2 flow (register file, PUT bytes to the presigned URL, create task, poll every 2 s up to 120 s) and normalises the different result shapes the docs describe (`results.url`, `results[].download_url`, region split skin scores, `skin_age` rows).
+| Path                       | Job                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `packages/money`           | Pure money logic: parse, categorise, ledger math, `adviseBuy`, facts and lines, `learn`  |
+| `packages/memory`          | Walrus Memory: client, namespaces, rate limiter, redaction                               |
+| `packages/chain`           | Tatum Sui gRPC client: pacing, metering, 402 fallback                                    |
+| `server/src`               | API: memory write queue and recall, pockets and moves, health, static files              |
+| `web/src/chat/useMira.ts`  | The agent: one message → one intent → a small plan, with a visible step trace            |
+| `web/src/chat/Chat.tsx`    | The iMessage-style thread and its cards                                                  |
 
-| Path | Purpose |
-| :--- | :--- |
-| `server/youcam.mjs` | YouCam v2 client: upload, task, poll, result parsing |
-| `server/index.mjs` | `/api/skin`, `/api/makeup`, `/api/cloth`, demo mode, static hosting |
-| `web/src/chat/useMira.ts` | The agent: intents, tool chain, step trace, memory |
-| `web/src/chat/Chat.tsx` | iMessage UI: bubbles, cards, before and after slider, photo sheet |
-| `web/src/landing/Landing.tsx` | Marketing page |
-| `web/src/data/catalog.ts` | Fictional brands, shades, stores and the `lip_color` effect builder |
+## Deploy
 
-## Screenshots
+`vercel deploy --prod` from the repo root (the web app; `vercel.json` rewrites `/api/*` to Railway) and
+`railway up --service mira` (the API, reading its keys from Railway variables).
 
-| Landing | Agent trace | Skin report | Matched picks |
-| :---: | :---: | :---: | :---: |
-| ![Landing](artifacts/screenshots/01.png) | ![Agent trace](artifacts/screenshots/03.png) | ![Skin report](artifacts/screenshots/04.png) | ![Picks](artifacts/screenshots/05.png) |
-| **Greeting** | **Lip try-on** | **Outfit try-on** | **Mira remembers** |
-| ![Greeting](artifacts/screenshots/02.png) | ![Lip try-on](artifacts/screenshots/06.png) | ![Outfit try-on](artifacts/screenshots/07.png) | ![Memory](artifacts/screenshots/08.png) |
+## Tests
 
-## Demo mode
+```bash
+npm run typecheck && npm test   # money logic, memory queue, pockets, env, chain, memory packages
+npm run e2e                     # the happy path in Chromium, preview mode, with a second device
+npm run docs:links && npm run secrets:history
+```
 
-All three features were verified live against the YouCam API (the header badge reads "YouCam live"); the deployed app runs live. Our free trial units ran out while filming, so the submission video was recorded in demo mode and says so on screen. Measured live on the demo photos: Skin Analysis about 6 to 9 s, Makeup VTO about 8 s, AI Clothes about 14 s, end to end including upload and polling.
+`npm run e2e` never writes to mainnet or testnet: it forces preview mode.
 
-Without a `YOUCAM_API_KEY` the app still runs, in a clearly labelled demo mode ("demo mode" in the header, "demo preview" on results): the server returns deterministic skin scores per photo, the bundled demo selfie gets a local lip tint preview, and the outfit card previews the garment reference.
+## Notes
 
-If a selfie is rejected because the face is too small (YouCam needs the face to cover over 60% of the width), the agent zooms toward the face and retries once on its own before asking the user for a closer photo.
-
-To re-record the video run `./scripts/demo-video.sh` against a running live server, or `DEMO=1 ./scripts/demo-video.sh` for demo mode (macOS, needs ffmpeg and Playwright Chromium). The soundtrack is built from GarageBand Apple Loops (Chillwave pack) and is ducked under the voice; sound effects are synthesized. Drop studio voice files named `assets/voice/<segment>.mp3` (for example from ElevenLabs) to replace the macOS voice. Output lands in `artifacts/mira-demo.mp4`.
-
-## Notes and limitations
-
-Brands, stores and prices are fictional so the demo carries no third party trademarks; a production build would plug a real catalog and price feed into `catalog.ts`. Demo photos in `web/public/samples` are YouCam's own documentation sample images. The iMessage experience is a faithful web rendition so judges can open it on any iPhone without an Apple Business Chat account; the same agent could sit behind an iMessage relay (for example Business Chat) unchanged because all state lives in the agent hook and the server API.
+- Stores and prices in the "should I buy" check are fictional (`web/src/data/catalog.ts`).
+- Mira Cash is test money: $1 is 0.001 testnet SUI. Nothing here touches real money.
+- The YouCam skin and try-on flows this fork started from live on in
+  [upstream](https://github.com/harrymove-ctrl/mira-imessage); [DEVPOST.md](docs/DEVPOST.md) keeps that
+  history.

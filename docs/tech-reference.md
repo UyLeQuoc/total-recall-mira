@@ -1,8 +1,7 @@
 # Tech reference: Walrus Memory, Tatum and Sui
 
-> **Carried over from [Hunch](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/tech-reference.md) on 2026-11-03.** §1 (Walrus Memory, with the
-> field notes measured on mainnet in §1.11) and §2 (Tatum) apply here as they are. §3 is Hunch's own Sui
-> pieces, kept as an example.
+> §1 is Walrus Memory, with the field notes measured on mainnet in §1.11. §2 is Tatum. §3 is the Sui
+> pieces Mira uses for its pockets ([ADR-0004](adr/0004-mira-cash-pockets-on-sui-testnet.md)).
 
 A builder's cheat sheet for Total Recall, taken from the official docs on 2026-10-18. Walrus Memory is in
 beta and changes often, so check the linked pages before you rely on a detail.
@@ -138,7 +137,7 @@ const model = withMemWal(baseModel, {
 
 Before generation it recalls on the last user message and injects matches as a system message. After
 generation it optionally runs `analyze()` and saves facts in the background. Use direct SDK calls when you
-need precise control. Hunch does, so that every call can cite the memories it used (PRD §6.4).
+need precise control. Mira does: every line is a typed fact built by the server ([PRD §8](prd.md#8-walrus-memory)).
 
 ### 1.9 Portable memory in AI tools (MCP)
 
@@ -167,7 +166,7 @@ memories in every tool, which makes a strong "portable memory" demo.
 
 ### 1.11 Field notes (measured on mainnet)
 
-Measured by the team on SDK 0.1.8, Sep–Oct 2026. Hunch pins 0.1.12, which adds `rememberBulk`,
+Measured by the team on SDK 0.1.8, Sep–Oct 2026. This repo pins 0.1.12, which adds `rememberBulk`,
 `idempotencyKey` and `sort: "recent"`, so re-check a row before you lean on it.
 
 | Topic            | What was measured                                                                                                                                                      | What to do                                                                                                                                                 |
@@ -178,17 +177,17 @@ Measured by the team on SDK 0.1.8, Sep–Oct 2026. Hunch pins 0.1.12, which adds
 | Recall form      | Only the **object form** `recall({ query, limit, namespace, maxDistance })` worked; the positional form dropped matches                                                | Object form only                                                                                                                                           |
 | Distances        | Question-shaped queries put true positives at **0.449–0.777**                                                                                                          | `maxDistance` 0.8 for questions, dedupe at < 0.25 (except corrections)                                                                                     |
 | Corrections      | They get lost to dedupe, to the model forgetting to write, and to being outranked                                                                                      | Dedupe a correction only against earlier corrections; run a second recall on the `[correction]` tag; order by `created_at`, newest first                   |
-| Rate limits      | **60 weighted requests/min per delegate key** on writes, 200/min on the read API                                                                                       | A per-key limiter (`limiterFor`). Every user's lines share Hunch's one key, so batch with `rememberBulk`                                                   |
+| Rate limits      | **60 weighted requests/min per delegate key** on writes, 200/min on the read API                                                                                       | A per-key limiter (`limiterFor`). Every user's lines share the operator's one key, so batch with `rememberBulk`                                                 |
 | Delegates        | **At most 20 delegate keys per account.** Removal bumps the Seal rotation counter. Revocation takes effect after about **32 s**                                        | One key is enough for the MVP. User-owned memory (P2) adds one per user                                                                                    |
 | Sponsorship      | The relayer's `/sponsor` accepts **exactly one** of `create_account` / `add_delegate_key` / `remove_delegate_key` per tx. The user needs no SUI                        | Account set-up goes through relayer sponsorship (`executeAccountTx`), and falls back to paying when it's refused                                           |
 | Deletion         | **There's no way to delete a current memory.** `POST /api/forget` removes index rows for a whole namespace. The Security Delete API only cleans up legacy V1 blobs     | Never write anything private. A retraction is a new line, not a deletion                                                                                   |
 | Expiry           | New memories live about **210 days** (read API `expires_at`)                                                                                                           | Fine for the hackathon window                                                                                                                              |
-| `restore()`      | Reported `total: 0` for namespaces that had memories                                                                                                                   | Don't rely on it. Postgres keeps every line Hunch wrote, with its blob id                                                                                  |
+| `restore()`      | Reported `total: 0` for namespaces that had memories                                                                                                                   | Don't rely on it. The device keeps every line it sent, with its blob id                                                                                    |
 | Read API         | `GET /v1/owners/:owner/memories` returns metadata only (no text); `/agents` lists delegates (flaky)                                                                    | Read text through recall                                                                                                                                   |
-| Owner decrypt    | Mainnet memories use the committee Seal server, which needs an **Enoki Seal API key** for direct decryption                                                            | Not needed: Hunch reads through its delegate key                                                                                                           |
+| Owner decrypt    | Mainnet memories use the committee Seal server, which needs an **Enoki Seal API key** for direct decryption                                                            | Not needed: the server reads through its delegate key                                                                                                      |
 | zkLogin          | A zkLogin address depends on the OAuth client ID, so the same Google account gets a different address than on memory.walrus.xyz                                        | Use a **Slush wallet** for any demo that opens memory.walrus.xyz                                                                                           |
 | `withMemWal`     | `autoSave` analyzes every message, which produces low-quality duplicate facts                                                                                          | Not used. Writes stay explicit                                                                                                                             |
-| `sort` on 0.1.12 | The published types of `recall` have no `sort` option, though the notes above expected `sort: "recent"`                                                                | Pick the newest line per voice by its `as_of` and n, from a wide recall (limit 50) or the Postgres copy ([ADR-0012](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/adr/0012-scoring-and-trust-memory.md)) |
+| `sort` on 0.1.12 | The types now have `sort: "recent"`, which over-fetches `limit × 5` (at most 50) and orders by write time                                                         | Mira recalls each namespace whole (limit 50) and keeps the newest line per key by its own `as_of` (`learn`) |
 | Vietnamese       | Byte-identical round trip; cross-language recall 8/8                                                                                                                   | Fine for EN/VI users                                                                                                                                       |
 
 ---
@@ -198,9 +197,9 @@ Measured by the team on SDK 0.1.8, Sep–Oct 2026. Hunch pins 0.1.12, which adds
 ### 2.1 Auth
 
 Get an API key from https://dashboard.tatum.io/ and send it as the **`x-api-key`** header, both for HTTP
-and as gRPC metadata. Hunch uses the key only for gRPC (no JSON-RPC, [ADR-0002](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/adr/0002-sui-grpc-only.md)).
+and as gRPC metadata. Mira uses the key only for gRPC (no JSON-RPC, [ADR-0001](adr/0001-track-3-from-mira-with-a-memory-and-tatum-kit.md)).
 
-### 2.2 Sui RPC gateway: **gRPC only** ([ADR-0002](https://github.com/UyLeQuoc/total-recall-hunch/blob/main/docs/adr/0002-sui-grpc-only.md))
+### 2.2 Sui RPC gateway: **gRPC only** ([ADR-0001](adr/0001-track-3-from-mira-with-a-memory-and-tatum-kit.md))
 
 | Network     | gRPC (native, `x-api-key` metadata)         | JSON-RPC                   |
 | ----------- | ------------------------------------------- | -------------------------- |
@@ -208,14 +207,14 @@ and as gRPC metadata. Hunch uses the key only for gRPC (no JSON-RPC, [ADR-0002](
 | Testnet     | `https://sui-testnet-grpc.gateway.tatum.io` | not offered by Tatum (404) |
 
 - **Sui deprecated JSON-RPC.** Public fullnodes reject it ("JSON-RPC on public fullnodes has been
-  deprecated"), so **Hunch uses gRPC everywhere**
+  deprecated"), so **Mira uses gRPC everywhere**
   ([Tatum migration guide](https://docs.tatum.io/docs/sui-migration-guide-from-json-rpc-to-grpc)).
 - **Tatum speaks native gRPC** (`application/grpc`). `@mysten/sui`'s `SuiGrpcClient` defaults to
   gRPC-web and fails with "unexpected response content type: application/grpc".
   - **Server side (verified):** `new SuiGrpcClient({ network, transport })` with a
     `GrpcTransport` from `@protobuf-ts/grpc-transport` + `@grpc/grpc-js`:
     `host: "sui-<net>-grpc.gateway.tatum.io:443"`, `ChannelCredentials.createSsl()`,
-    `meta: { "x-api-key": key }`. It lives in `@hunch/chain` (`createTatumSuiClient`).
+    `meta: { "x-api-key": key }`. It lives in `@mira/chain` (`createTatumSuiClient`).
   - **Browser:** gRPC-web against a public fullnode (`https://fullnode.<network>.sui.io:443`), or go
     through our API.
 - Build transactions client-side with the Sui SDK. Tatum doesn't support `unsafe_*` helpers.
@@ -235,7 +234,7 @@ gRPC v2 services we use:
 | Move introspection                                  | `MovePackageService.GetPackage` / `GetFunction` / `GetDatatype`                                                      |
 | SuiNS                                               | `NameService.LookupName` / `ReverseLookupName`                                                                       |
 
-**There's no gRPC equivalent** of "query events by type" or "transactions by address". Hunch doesn't need
+**There's no gRPC equivalent** of "query events by type" or "transactions by address". Mira doesn't need
 one: it knows its own digests, so it reads them with `GetTransaction`.
 
 **Verified on Tatum testnet:** `SubscribeCheckpoints` streams through Tatum with a `TransactionFilter`
@@ -245,7 +244,7 @@ of `emitModule: "<pkg>::<module>"`.
   `LedgerService.GetCheckpoint`.
 - Streams can get HTTP 429 too, so reconnect with backoff.
 - **A stream costs credits per frame:** even a filtered one sends about 720 frames an hour. Keep it off
-  unless a screen needs it (PRD §11).
+  unless a screen needs it. Mira doesn't open one.
 
 ### 2.3 Data API (`/v4/data/...`)
 
@@ -281,30 +280,29 @@ prize requires the product to be built _primarily_ with it.
 
 ---
 
-## 3. Sui pieces Hunch uses
+## 3. Sui pieces Mira uses ([ADR-0004](adr/0004-mira-cash-pockets-on-sui-testnet.md))
 
-### 3.1 Gas
+Measured on Sui testnet on 2026-11-03, through `@mira/chain`.
 
-- **Sponsored transactions:** the sender and the sponsor both sign. `SUI_SPONSOR_KEY` pays the anchors'
-  gas, so users hold no SUI.
-- **Gas from the address balance** (`enable_address_balance_gas_payments`, on both networks): the SDK pays
-  gas from the gas owner's address balance when it has one. When it pays partly from the address balance
-  and partly with a coin, the coin is deleted and its value lands in the address balance.
+### 3.1 Pockets
 
-### 3.2 DeepBook Predict (testnet; the spike is P0, trading P1)
+- **Derived keys:** a pocket's Ed25519 secret is `HMAC-SHA256(MIRA_WALLET_SECRET, "<user code>:<pocket>")`.
+  The server stores no keys; the same code always gives the same addresses.
+- **Units:** $1 is 1,000,000 MIST (0.001 testnet SUI). `GetBalance` gives the total, so one call per pocket.
 
-- BTC/USD markets that expire every 1 or 5 minutes, live on Sui since Sep 12, 2026. A position pays a fixed
-  amount if the price settles inside its range; USDC collateral, a liquidity pool on the other side;
-  anyone can settle, from Pyth's price at expiry.
-- SDK: `@mysten/deepbook-v3@2.9.1` (`/predict`, `/sessions`), on `SuiGrpcClient`, so every call goes
-  through Tatum. Testnet registry `0x85cf…ccc4` (check the SDK's constants for the full id).
-- It fills only queued orders (`planMint`, then `enqueuePlan`, then `waitForOutcome`), takes none in the
-  last ~10 s before expiry, and only between 0.15 and 0.85 probability; the premium is at least 1 USDC.
-- **A session can trade but not withdraw, and has no spending cap.** Hunch checks a rule's limits before
-  every order, and Pause all revokes the session.
-- Test USDC has to be requested; it's on the Nov 2 list (PRD §14).
-- Pyth's Hermes needs a key, so Pyth is only a cross-check; Predict settles itself.
+### 3.2 Sponsored moves
 
-### 3.3 Free market data (polling never uses Tatum)
+- The sender is the user's pocket and the **gas owner is the operator** (`tx.setGasOwner`). The SDK picks
+  gas coins from the gas owner when it builds, so a $41 move moves exactly $41.
+- The amount comes from the sender's coins with `coinWithBalance({ balance, useGasCoin: false })`. With the
+  default `useGasCoin`, a sponsored transaction would split the operator's gas coin instead.
+- Both sign the same bytes; `ExecuteTransaction` takes `[user, sponsor]` signatures, then
+  `waitForTransaction` before reading balances.
+- One move: 1 `ListOwnedObjects`, 1 `SimulateTransaction`, 1 `ExecuteTransaction`, about 2 `GetTransaction`
+  and the balance reads; about 2–3 s end to end. Moves run one at a time so the operator's gas coins
+  never race.
 
-The sources, their limits and what each is used for are in [the PRD §9](hunch-prd.md#9-data-sources).
+### 3.3 Test SUI
+
+- `requestSuiFromFaucetV2` answers "CI compatibility is disabled". `requestSuiFromFaucetV3` (it solves a
+  small proof of work) gives 1 SUI. `npm run cash:faucet` uses it to top up the operator.

@@ -17,7 +17,7 @@ export interface TatumSuiOptions {
   /** Unary calls per second. Tatum's gateway answers 429 above the plan's limit (3/s is safe on free). */
   maxRps?: number;
   /**
-   * Where calls go while Tatum answers 402, out of credits (Hunch ADR-0004). Defaults to the public fullnode
+   * Where calls go while Tatum answers 402, out of credits (ADR-0001). Defaults to the public fullnode
    * (`publicGrpcUrl`); null turns the fallback off.
    */
   fallbackUrl?: string | null;
@@ -29,7 +29,7 @@ export function tatumGrpcUrl(network: SuiNetwork): string {
 
 /**
  * Tatum serves native gRPC (`application/grpc`), not gRPC-web, so Node needs the grpc-js transport
- * instead of SuiGrpcClient's default (Hunch ADR-0002). The API key rides as `x-api-key` metadata.
+ * instead of SuiGrpcClient's default (ADR-0001). The API key rides as `x-api-key` metadata.
  */
 export function createTatumTransport(opts: TatumSuiOptions): GrpcTransport {
   return grpcTransport(opts.url ?? tatumGrpcUrl(opts.network), opts.timeoutMs, {
@@ -68,7 +68,7 @@ export function createTatumSuiClient(opts: TatumSuiOptions): SuiGrpcClient {
   return new SuiGrpcClient({ network: opts.network, transport });
 }
 
-/** `SUI_GRPC_FALLBACK[_TESTNET]`: a gRPC URL, or `off`. Unset means the public fullnode (Hunch ADR-0004). */
+/** `SUI_GRPC_FALLBACK[_TESTNET]`: a gRPC URL, or `off`. Unset means the public fullnode (ADR-0001). */
 export function suiFallbackUrl(
   network: SuiNetwork,
   env: Record<string, string | undefined> = process.env,

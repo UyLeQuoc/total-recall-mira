@@ -44,7 +44,7 @@ export function redact(value: unknown, depth = 0): unknown {
 }
 
 /**
- * Hunch ADR-0001: fields every log line inherits while a request or a job runs (`requestId`,
+ * Fields every log line inherits while a request or a job runs (`requestId`,
  * `jobId`). Set with `withLogContext`; read by every logger, whatever its `base`.
  */
 const logContext = new AsyncLocalStorage<LogFields>();

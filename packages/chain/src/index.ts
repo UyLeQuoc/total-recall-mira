@@ -1,6 +1,6 @@
 /**
- * @mira/chain: the typed Tatum client. Sui is gRPC only (Hunch ADR-0002); every Sui call goes through it
- * (Hunch ADR-0003), and through a public fullnode while Tatum answers 402 (Hunch ADR-0004).
+ * @mira/chain: the typed Tatum client. Sui is gRPC only (ADR-0001); every Sui call goes through it, and
+ * through a public fullnode while Tatum answers 402.
  */
 export * from "./fallback.ts";
 export * from "./funds.ts";

@@ -49,7 +49,7 @@ describe("logger", () => {
     expect(redact(new Error("boom"))).toEqual({ name: "Error", message: "boom" });
   });
 
-  it("adds the request or job context to every line written inside it (Hunch ADR-0001)", async () => {
+  it("adds the request or job context to every line written inside it", async () => {
     const lines: string[] = [];
     const log = createLogger({ service: "t" }, (l) => lines.push(l));
     await withLogContext({ requestId: "r-1" }, async () => {
