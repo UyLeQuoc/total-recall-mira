@@ -1,5 +1,9 @@
 # Mira: your AI beauty and style assistant in iMessage
 
+> **This fork is becoming a Track 3 entry (Consumer Finance Apps) to the Walrus × Tatum "Total Recall"
+> hackathon.** Start at [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md). What follows describes
+> Mira as built for the YouCam hackathon.
+
 Mira is a shopping assistant you text like a friend. Send one selfie and Mira reads your skin with **YouCam AI Skin Analysis**, matches products to your three weakest scores, checks three stores for the best price, and then tries the best lip shade on your own face with **YouCam Makeup VTO** before you ask. Ask for a full look and Mira dresses your full body photo with **YouCam AI Clothes**. Everything happens inside an iMessage style thread that runs on iPhone Safari (add it to the home screen for a full screen app) and on desktop inside a phone frame.
 
 **Live:** https://mira-production-110e.up.railway.app (chat at `/#/chat`)

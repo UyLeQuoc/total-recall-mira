@@ -6,8 +6,15 @@
     "dev": "node --watch server/index.mjs & npm --prefix web run dev; wait",
     "server": "node server/index.mjs",
     "build": "npm --prefix web ci && npm --prefix web run build",
-    "start": "node server/index.mjs"
+    "start": "node server/index.mjs",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspaces",
+    "docs:links": "node scripts/check-links.ts",
+    "secrets:history": "node scripts/scan-history.ts"
   },
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=20"
   },
