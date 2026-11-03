@@ -23,7 +23,9 @@ Tatum "Total Recall" hackathon: **Mira, the money friend you text** ([PRD](docs/
   second device that restores from memory.
 - **Deployed:** the web app on Vercel (https://mira-flax.vercel.app) and the API on Railway, project `mira`
   ([ADR-0008](docs/adr/0008-web-on-vercel-api-on-railway.md)), on the shared keys ([ADR-0007](docs/adr/0007-shared-memory-account-and-tatum-key.md)).
-- **Not done yet:** at least 10 memories on mainnet from real use, the video and the blog post
+- **The showreel** (2 min, 1080p60) is rendered from code in `video/` ([ADR-0009](docs/adr/0009-showreel-rendered-from-code.md)):
+  `npm run video:shots && npm run video`.
+- **Not done yet:** at least 10 memories on mainnet from real use, and the blog post
   ([PRD §12](docs/prd.md#12-plan-to-the-deadline)).
 
 ## The hackathon ([docs/event-rules.md](docs/event-rules.md))

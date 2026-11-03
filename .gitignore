@@ -12,3 +12,4 @@ artifacts/elevenlabs-previous-draft.txt
 assets/voice/.claude
 artifacts/e2e/
 .vercel
+video/.build/

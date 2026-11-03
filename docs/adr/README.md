@@ -13,3 +13,4 @@ here, in the same commit as the change. An accepted ADR is never rewritten; a ne
 | [0006](0006-typescript-server-and-preview-mode.md)         | The server is TypeScript run by Node; preview mode without keys                  | Accepted |
 | [0007](0007-shared-memory-account-and-tatum-key.md)        | Run on the team's existing Walrus Memory account and Tatum key; deploy to Railway | Accepted; deploy superseded by 0008 |
 | [0008](0008-web-on-vercel-api-on-railway.md)               | The web app on Vercel, the API on Railway                                        | Accepted |
+| [0009](0009-showreel-rendered-from-code.md)               | The showreel is rendered from code                                               | Accepted |
