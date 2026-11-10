@@ -26,7 +26,8 @@ Tatum "Total Recall" hackathon: **Mira, the money friend you text** ([PRD](docs/
 - **The showreel** (2 min, 1080p60) is rendered from code in `video/` ([ADR-0009](docs/adr/0009-showreel-rendered-from-code.md)):
   `npm run video:shots && npm run video`.
 - **Not done yet:** at least 10 memories on mainnet from real use, and the blog post
-  ([PRD §12](docs/prd.md#12-plan-to-the-deadline)).
+  ([PRD §12](docs/prd.md#12-plan-to-the-deadline)). The form's answers and what's left before submitting
+  are in [docs/submission-form.md](docs/submission-form.md).
 
 ## The hackathon ([docs/event-rules.md](docs/event-rules.md))
 
